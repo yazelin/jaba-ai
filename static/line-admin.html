@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>呷爸 - LINE 群組管理</title>
+  <link rel="icon" type="image/png" href="images/jaba-sm.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="js/menu-manager.js"></script>
+</head>
+<body>
+  <!-- 登入驗證 -->
+  <div class="password-container" id="login-section">
+    <a href="board.html" class="back-link back-link-standalone">← 返回看板</a>
+    <div class="password-box">
+      <h2>📱 LINE 群組管理</h2>
+      <input type="text" id="group-code-input" placeholder="群組代碼" autofocus onkeypress="handleLoginKeyPress(event)">
+      <br>
+      <button class="btn btn-primary" onclick="adminLogin()">登入</button>
+      <p class="error-msg" id="login-error" style="display: none;"></p>
+    </div>
+  </div>
+
+  <!-- 管理介面 -->
+  <div class="container admin-container" id="manage-section" style="display: none;">
+    <!-- 頁面標題 -->
+    <div class="line-admin-header">
+      <a href="board.html" class="back-link">← 返回看板</a>
+      <h1><img src="images/jaba-sm.png" alt="呷爸" class="logo-icon"> LINE 群組管理</h1>
+      <div class="header-actions">
+        <button class="btn btn-sm btn-secondary" onclick="openChangeCodeModal()">🔑 變更代碼</button>
+        <button class="btn btn-sm btn-secondary" onclick="logout()">登出</button>
+      </div>
+    </div>
+
+    <!-- 主要管理區域 -->
+    <div id="manage-panel">
+      <div class="admin-three-columns line-admin-two-columns">
+        <!-- 左側：店家管理 -->
+        <div class="admin-left-panel">
+          <div class="panel-card stores-panel">
+            <div class="panel-header">
+              <span>🏬</span>
+              <span>店家管理</span>
+              <button class="btn btn-sm btn-primary" onclick="showCreateStoreModal()" style="margin-left: auto;">+ 新增</button>
+            </div>
+            <button class="menu-upload-btn" onclick="menuManager.open()">
+              📷 上傳菜單
+            </button>
+            <div class="panel-content stores-panel-content" id="store-list">
+              <div class="orders-empty">載入中...</div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 右側：群組/訂單管理 -->
+        <div class="admin-right-panel">
+          <!-- 群組選擇器 -->
+          <div class="panel-card group-selector-panel">
+            <div class="panel-header">
+              <span>👥</span>
+              <span>選擇群組</span>
+            </div>
+            <div class="panel-content">
+              <select id="group-selector" onchange="loadGroupData()">
+                <option value="">-- 選擇群組 --</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 今日店家設定 -->
+          <div class="panel-card store-info-panel" id="today-store-panel" style="display: none;">
+            <div class="panel-header">
+              <span>🏪</span>
+              <span>今日店家</span>
+              <button class="btn btn-sm btn-primary" onclick="openTodayStoreModal()" style="margin-left:auto;">設定</button>
+            </div>
+            <div class="panel-content" id="current-today-stores">
+              <div class="orders-empty">尚未設定</div>
+            </div>
+          </div>
+
+          <!-- 今日訂單 -->
+          <div class="panel-card orders-panel" id="orders-panel" style="display: none;">
+            <div class="panel-header">
+              <span>📦</span>
+              <span>今日訂單</span>
+            </div>
+            <!-- 訂單統計 -->
+            <div class="panel-content orders-stats-section" id="orders-stats"></div>
+            <!-- 訂單列表 -->
+            <div class="panel-content" id="orders-content">
+              <div class="orders-empty">載入中...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 菜單管理（全寬顯示） -->
+      <div class="panel-card" id="menu-manage-panel" style="display: none;">
+        <div class="panel-header">
+          <span>📋</span>
+          <span>菜單管理</span>
+          <button class="btn btn-sm btn-secondary" onclick="hideMenuPanel()" style="margin-left: auto;">返回</button>
+        </div>
+        <div class="panel-content">
+          <div id="menu-store-info" class="menu-store-info"></div>
+
+          <!-- 菜單上傳按鈕 -->
+          <div class="menu-upload-section">
+            <button class="menu-upload-btn" onclick="menuManager.open()">
+              📷 上傳菜單圖片辨識
+            </button>
+          </div>
+
+          <!-- 現有菜單 -->
+          <div id="current-menu-content">
+            <h4>📋 現有菜單</h4>
+            <div id="menu-categories"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 新增店家 Modal -->
+    <div class="modal-overlay" id="create-store-modal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>新增群組專屬店家</h3>
+          <button class="modal-close" onclick="hideCreateStoreModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>店家名稱 *</label>
+            <input type="text" id="new-store-name" placeholder="例：好吃便當">
+          </div>
+          <div class="form-group">
+            <label>電話</label>
+            <input type="text" id="new-store-phone" placeholder="例：02-12345678">
+          </div>
+          <div class="form-group">
+            <label>地址</label>
+            <input type="text" id="new-store-address" placeholder="例：台北市信義區...">
+          </div>
+          <div class="form-group">
+            <label>說明</label>
+            <textarea id="new-store-description" placeholder="店家特色、營業時間等"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" onclick="createStore()">建立</button>
+          <button class="btn btn-secondary" onclick="hideCreateStoreModal()">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 設定今日店家對話框 -->
+    <div class="modal-overlay" id="today-store-modal" style="display: none;">
+      <div class="modal-content" style="max-width: 400px;">
+        <div class="modal-header">
+          <h3>🏪 設定今日店家</h3>
+          <button class="modal-close" onclick="closeTodayStoreModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="today-store-checkboxes" class="store-checkbox-list" style="max-height: 300px; overflow-y: auto;"></div>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+          <button class="btn btn-secondary" onclick="closeTodayStoreModal()">取消</button>
+          <button class="btn btn-primary" onclick="saveTodayStores()">確認設定</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 變更群組代碼對話框 -->
+    <div class="modal-overlay" id="change-group-code-modal" style="display: none;">
+      <div class="modal-content" style="max-width: 400px;">
+        <div class="modal-header">
+          <h3>🔑 變更群組代碼</h3>
+          <button class="modal-close" onclick="closeChangeGroupCodeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>目前代碼</label>
+            <input type="text" id="current-group-code" placeholder="請輸入目前的群組代碼">
+          </div>
+          <div class="form-group">
+            <label>新代碼</label>
+            <input type="text" id="new-group-code" placeholder="請輸入新的群組代碼（4-20字元）">
+          </div>
+          <div class="form-group">
+            <label>確認新代碼</label>
+            <input type="text" id="confirm-new-group-code" placeholder="請再次輸入新代碼">
+          </div>
+          <div class="change-group-code-result" id="change-group-code-result" style="display: none;"></div>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+          <button class="btn btn-secondary" onclick="closeChangeGroupCodeModal()">取消</button>
+          <button class="btn btn-primary" onclick="changeGroupCode()">確認變更</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 菜單圖片上傳對話框 -->
+    <div class="modal-overlay" id="menu-upload-modal" style="display: none;">
+      <div class="modal-content menu-upload-modal">
+        <div class="modal-header">
+          <h3>📷 上傳菜單圖片</h3>
+          <button class="modal-close" onclick="menuManager.close()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- 店家選擇（在所有步驟都顯示） -->
+          <div class="store-select" style="margin-bottom: 15px;">
+            <label>選擇店家：</label>
+            <select id="target-store-select">
+              <option value="">-- 選擇現有店家 --</option>
+              <option value="__new__">+ 新增店家</option>
+            </select>
+            <input type="text" id="new-store-name-input" placeholder="輸入新店家名稱" style="display: none;">
+          </div>
+
+          <!-- 步驟 1：上傳圖片 -->
+          <div id="upload-step" class="upload-step">
+            <div class="upload-area" id="upload-area" onclick="document.getElementById('menu-image-input').click()">
+              <div class="upload-icon">📷</div>
+              <div class="upload-text">點擊或拖放圖片到這裡</div>
+              <div class="upload-hint">支援 JPG、PNG，最大 10MB</div>
+            </div>
+            <input type="file" id="menu-image-input" accept="image/jpeg,image/png" style="display: none;" onchange="menuManager.handleImageSelect(event)">
+
+            <div class="upload-preview" id="upload-preview" style="display: none;">
+              <img id="preview-image" src="" alt="預覽">
+            </div>
+
+            <div class="upload-error" id="upload-error" style="display: none;"></div>
+
+            <div class="upload-actions">
+              <button class="btn btn-secondary" id="clear-image-btn" onclick="menuManager.clearImage()" style="display: none;">清除</button>
+              <button class="btn btn-primary" id="recognize-btn" onclick="menuManager.recognize()" disabled>
+                🔍 開始辨識
+              </button>
+            </div>
+          </div>
+
+          <!-- 步驟 2：辨識中 -->
+          <div id="recognizing-step" class="upload-step" style="display: none;">
+            <div class="loading-jaba">
+              <img src="images/jaba-keyin-sm.png" alt="呷爸" class="loading-jaba-icon">
+              <div class="loading-spinner-ring"></div>
+            </div>
+            <div class="loading-text">呷爸正在努力 key 菜單...</div>
+          </div>
+
+          <!-- 步驟 3：辨識結果 -->
+          <div id="result-step" class="upload-step" style="display: none;">
+            <div class="result-warnings" id="result-warnings"></div>
+            <div class="result-editor" id="result-editor">
+              <!-- 動態生成的編輯表格（含左右兩欄：菜單+店家資訊+按鈕） -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 確認對話框 -->
+  <div class="modal-overlay" id="confirm-modal" style="display: none;">
+    <div class="modal-content" style="max-width: 400px;">
+      <div class="modal-header">
+        <h3 id="confirm-modal-title">確認</h3>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-modal-message" style="margin: 0; white-space: pre-wrap;"></p>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+        <button class="btn" id="confirm-modal-cancel" style="background: #6c757d; color: white;">取消</button>
+        <button class="btn btn-danger" id="confirm-modal-ok">確定</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 自動偵測 base path（支援 nginx 反向代理）
+    const basePath = (() => {
+      const path = window.location.pathname;
+      if (path.startsWith('/jaba-ai')) return '/jaba-ai';
+      return '';
+    })();
+    console.log('basePath:', basePath, 'pathname:', window.location.pathname);
+
+    function apiFetch(url, options = {}) {
+      const fullUrl = basePath + url;
+      console.log('API call:', fullUrl);
+      return fetch(fullUrl, options);
+    }
+
+    // 通知函數（取代 alert）- 支援堆疊顯示
+    function showNotification(message, type = 'success') {
+      // 取得或建立通知容器
+      let container = document.getElementById('notification-container');
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'notification-container';
+        container.className = 'notification-container';
+        document.body.appendChild(container);
+      }
+
+      const notif = document.createElement('div');
+      notif.className = 'notification';
+      if (type === 'error') {
+        notif.style.background = '#f8d7da';
+        notif.style.color = '#721c24';
+        notif.style.borderLeft = '4px solid #dc3545';
+      } else {
+        notif.style.borderLeft = '4px solid #28a745';
+      }
+      notif.textContent = message;
+      container.appendChild(notif);
+
+      // 淡出並移除
+      setTimeout(() => {
+        notif.classList.add('fade-out');
+        setTimeout(() => notif.remove(), 300);
+      }, 3000);
+    }
+
+    function showConfirm(message, title = '確認') {
+      return new Promise((resolve) => {
+        document.getElementById('confirm-modal-title').textContent = title;
+        document.getElementById('confirm-modal-message').textContent = message;
+        document.getElementById('confirm-modal').style.display = 'flex';
+
+        const okBtn = document.getElementById('confirm-modal-ok');
+        const cancelBtn = document.getElementById('confirm-modal-cancel');
+
+        const cleanup = () => {
+          document.getElementById('confirm-modal').style.display = 'none';
+          okBtn.replaceWith(okBtn.cloneNode(true));
+          cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+        };
+
+        document.getElementById('confirm-modal-ok').onclick = () => {
+          cleanup();
+          resolve(true);
+        };
+        document.getElementById('confirm-modal-cancel').onclick = () => {
+          cleanup();
+          resolve(false);
+        };
+      });
+    }
+
+    let currentUser = null;
+    let currentGroupId = null;
+    let currentGroupCode = null;  // 登入時的群組代碼
+    let allStores = [];
+
+    // === 登入功能 ===
+    function handleLoginKeyPress(event) {
+      if (event.key === 'Enter') {
+        adminLogin();
+      }
+    }
+
+    async function adminLogin() {
+      const groupCode = document.getElementById('group-code-input').value.trim();
+      const errorEl = document.getElementById('login-error');
+
+      if (!groupCode) {
+        errorEl.textContent = '請輸入群組代碼';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      try {
+        const res = await apiFetch('/api/line-admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: groupCode }),
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          currentUser = data;
+          currentGroupCode = groupCode;  // 保存群組代碼供後續 API 使用
+          errorEl.style.display = 'none';
+          showManagePanel();
+        } else {
+          errorEl.textContent = data.detail || '代碼錯誤';
+          errorEl.style.display = 'block';
+        }
+      } catch (err) {
+        console.error('登入失敗:', err);
+        errorEl.textContent = '登入失敗，請稍後再試';
+        errorEl.style.display = 'block';
+      }
+    }
+
+    function logout() {
+      currentUser = null;
+      currentGroupId = null;
+      currentGroupCode = null;
+      document.getElementById('group-code-input').value = '';
+      document.getElementById('manage-section').style.display = 'none';
+      document.getElementById('login-section').style.display = 'flex';
+    }
+
+    async function showManagePanel() {
+      document.getElementById('login-section').style.display = 'none';
+      document.getElementById('manage-section').style.display = 'block';
+
+      // 填入群組選項
+      const selector = document.getElementById('group-selector');
+      selector.innerHTML = '';
+      currentUser.groups.forEach((group, index) => {
+        const name = group.group_name || `群組 ${group.group_id.slice(-8)}`;
+        const selected = index === 0 ? 'selected' : '';
+        selector.innerHTML += `<option value="${group.group_id}" ${selected}>${name}</option>`;
+      });
+
+      // 載入店家列表
+      await loadStores();
+
+      // 初始化菜單管理模組
+      menuManager = new MenuManager({
+        fetchFn: apiFetch,
+        showNotification: showNotification,
+        getStores: () => allStores,
+        onMenuSaved: loadStores,
+        apiPrefix: '/api/line-admin',
+        groupCode: currentGroupCode,
+        filterEditableStores: stores => stores.filter(s => s.can_edit),
+        elements: {
+          newStoreName: 'new-store-name-input',
+        }
+      });
+      menuManager.init();
+
+      // 如果有群組，自動載入第一個群組的資料
+      if (currentUser.groups.length > 0) {
+        loadGroupData();
+      }
+    }
+
+    async function loadStores() {
+      try {
+        // 使用新的 API 取得群組可用店家（全局 + 群組專屬）
+        const res = await apiFetch(`/api/line-admin/stores/by-code/${encodeURIComponent(currentGroupCode)}`);
+        allStores = await res.json();
+        renderStoreList();
+      } catch (err) {
+        console.error('載入店家失敗:', err);
+      }
+    }
+
+    function renderStoreList() {
+      const el = document.getElementById('store-list');
+      if (!allStores || allStores.length === 0) {
+        el.innerHTML = '<div class="orders-empty">尚無店家</div>';
+        return;
+      }
+
+      // 排序：先全局後專屬，先啟用後停用
+      allStores.sort((a, b) => {
+        if (a.scope !== b.scope) return a.scope === 'global' ? -1 : 1;
+        if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      const html = allStores.map((store, index) => {
+        const isActive = store.is_active !== false;
+
+        const scopeTag = store.scope === 'global'
+          ? '<span class="scope-tag global">全局</span>'
+          : '<span class="scope-tag group">專屬</span>';
+
+        // 啟用/停用 icon
+        const toggleIcon = store.can_edit
+          ? (isActive
+            ? `<span class="store-icon-btn active" onclick="event.stopPropagation(); toggleStoreActive('${store.id}')" title="點擊停用">✅</span>`
+            : `<span class="store-icon-btn inactive" onclick="event.stopPropagation(); toggleStoreActive('${store.id}')" title="點擊啟用">⏸️</span>`)
+          : (isActive
+            ? `<span class="store-icon-btn active" title="啟用中">✅</span>`
+            : `<span class="store-icon-btn inactive" title="已停用">⏸️</span>`);
+
+        // 刪除 icon
+        const deleteIcon = store.can_edit
+          ? `<span class="store-icon-btn delete" onclick="event.stopPropagation(); confirmDeleteStore('${store.id}', '${store.name.replace(/'/g, "\\'")}')" title="刪除店家">🗑️</span>`
+          : '';
+
+        const menuBtn = store.can_edit
+          ? `<span class="store-edit-btn" onclick="event.stopPropagation(); menuManager.editExisting('${store.id}')">菜單</span>`
+          : '';
+
+        return `
+          <div class="store-manage-item">
+            <div class="store-manage-header" onclick="toggleStoreMenu('${store.id}', ${index})">
+              <div class="store-manage-info">
+                ${scopeTag}
+                ${toggleIcon}
+                ${deleteIcon}
+                <span class="store-manage-name">${store.name}</span>
+                ${menuBtn}
+              </div>
+              <span class="store-manage-toggle" id="toggle-${index}">▼</span>
+            </div>
+            <div class="store-manage-detail" id="store-menu-${index}" style="display: none;" data-store-id="${store.id}" data-loaded="false">
+              <div class="store-manage-meta">
+                ${store.phone ? `<div>📞 ${store.phone}</div>` : ''}
+                ${store.address ? `<div>📍 ${store.address}</div>` : ''}
+              </div>
+              <div class="store-menu-content" id="store-menu-content-${index}">
+                <div class="loading-text">載入中...</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      el.innerHTML = html;
+    }
+
+    async function toggleStoreActive(storeId) {
+      const store = allStores.find(s => s.id === storeId);
+      if (!store || !store.can_edit) return;
+
+      try {
+        const res = await apiFetch(`/api/line-admin/stores/by-code/${encodeURIComponent(currentGroupCode)}/${storeId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ is_active: !store.is_active })
+        });
+
+        if (res.ok) {
+          await loadStores();
+        }
+      } catch (err) {
+        console.error('切換店家狀態失敗:', err);
+      }
+    }
+
+    async function toggleStoreMenu(storeId, index) {
+      const menuEl = document.getElementById(`store-menu-${index}`);
+      const toggleEl = document.getElementById(`toggle-${index}`);
+      const contentEl = document.getElementById(`store-menu-content-${index}`);
+
+      if (menuEl.style.display === 'none') {
+        menuEl.style.display = 'block';
+        toggleEl.textContent = '▲';
+
+        // 載入菜單（如果還沒載入過）
+        if (menuEl.dataset.loaded === 'false') {
+          try {
+            const res = await apiFetch(`/api/line-admin/stores/by-code/${encodeURIComponent(currentGroupCode)}/${storeId}/menu`);
+            const menu = await res.json();
+
+            if (menu && menu.categories && menu.categories.length > 0) {
+              let html = '<div class="store-manage-menu">';
+              menu.categories.forEach(cat => {
+                html += `<div class="menu-cat-title">${cat.name}</div><div class="menu-cat-items">`;
+                cat.items.forEach(item => {
+                  const priceStr = item.variants && item.variants.length > 0
+                    ? item.variants.map(v => `${v.name}$${v.price}`).join(' / ')
+                    : `$${item.price}`;
+                  html += `<div class="menu-cat-item"><span>${item.name}</span><span>${priceStr}</span></div>`;
+                });
+                html += '</div>';
+              });
+              html += '</div>';
+              contentEl.innerHTML = html;
+            } else {
+              contentEl.innerHTML = '<div class="orders-empty">尚無菜單</div>';
+            }
+            menuEl.dataset.loaded = 'true';
+          } catch (err) {
+            console.error('載入菜單失敗:', err);
+            contentEl.innerHTML = '<div class="orders-empty">載入失敗</div>';
+          }
+        }
+      } else {
+        menuEl.style.display = 'none';
+        toggleEl.textContent = '▼';
+      }
+    }
+
+    async function loadGroupData() {
+      const groupId = document.getElementById('group-selector').value;
+      currentGroupId = groupId;
+
+      if (!groupId) {
+        document.getElementById('today-store-panel').style.display = 'none';
+        document.getElementById('orders-panel').style.display = 'none';
+        return;
+      }
+
+      document.getElementById('today-store-panel').style.display = 'block';
+      document.getElementById('orders-panel').style.display = 'block';
+      document.getElementById('menu-manage-panel').style.display = 'none';
+      document.querySelector('.admin-three-columns').style.display = 'flex';
+
+      await Promise.all([
+        loadTodayStores(),
+        loadOrders(),
+      ]);
+    }
+
+    async function loadTodayStores() {
+      const el = document.getElementById('current-today-stores');
+      try {
+        const res = await apiFetch(`/api/line-admin/groups/${currentGroupId}/today-stores`);
+        const stores = await res.json();
+
+        if (stores.length === 0) {
+          el.innerHTML = '<div class="orders-empty">尚未設定今日店家</div>';
+        } else {
+          el.innerHTML = stores.map(s => `<div class="today-store-tag">${s.store_name}</div>`).join('');
+        }
+      } catch (err) {
+        console.error('載入今日店家失敗:', err);
+        el.innerHTML = '<div class="orders-empty">載入失敗</div>';
+      }
+    }
+
+    // === 今日店家 Modal ===
+    async function openTodayStoreModal() {
+      if (!currentGroupId) {
+        showNotification('請先選擇群組', 'error');
+        return;
+      }
+
+      // 取得目前今日店家
+      let currentTodayStoreIds = [];
+      try {
+        const res = await apiFetch(`/api/line-admin/groups/${currentGroupId}/today-stores`);
+        const stores = await res.json();
+        currentTodayStoreIds = stores.map(s => s.store_id);
+      } catch (err) {
+        console.error('取得今日店家失敗:', err);
+      }
+
+      // 填充店家選項
+      const container = document.getElementById('today-store-checkboxes');
+      container.innerHTML = allStores.map(store => {
+        const checked = currentTodayStoreIds.includes(store.id) ? 'checked' : '';
+        return `
+          <label class="store-checkbox">
+            <input type="checkbox" value="${store.id}" ${checked}>
+            <span>${store.name}</span>
+          </label>
+        `;
+      }).join('');
+
+      document.getElementById('today-store-modal').style.display = 'flex';
+    }
+
+    function closeTodayStoreModal() {
+      document.getElementById('today-store-modal').style.display = 'none';
+    }
+
+    async function saveTodayStores() {
+      const checkboxes = document.querySelectorAll('#today-store-checkboxes input:checked');
+      const storeIds = Array.from(checkboxes).map(cb => cb.value);
+
+      if (storeIds.length === 0) {
+        showNotification('請至少選擇一個店家', 'error');
+        return;
+      }
+
+      try {
+        const res = await apiFetch(`/api/line-admin/groups/${currentGroupId}/today-stores`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ store_ids: storeIds }),
+        });
+
+        if (res.ok) {
+          closeTodayStoreModal();
+          await loadTodayStores();
+        } else {
+          showNotification('設定失敗', 'error');
+        }
+      } catch (err) {
+        console.error('設定失敗:', err);
+        showNotification('設定失敗', 'error');
+      }
+    }
+
+    async function loadOrders() {
+      const el = document.getElementById('orders-content');
+      const statsEl = document.getElementById('orders-stats');
+      try {
+        const res = await apiFetch(`/api/line-admin/groups/${currentGroupId}/orders`);
+        const sessions = await res.json();
+
+        if (!sessions || sessions.length === 0) {
+          el.innerHTML = '<div class="orders-empty">今日尚無訂單</div>';
+          if (statsEl) statsEl.innerHTML = '';
+          return;
+        }
+
+        // 統計資料
+        let orderCount = 0;
+        let totalAmount = 0;
+        let paidAmount = 0;
+        const itemCounts = {};
+
+        let html = '';
+        sessions.forEach(session => {
+          session.orders.forEach(order => {
+            orderCount++;
+            totalAmount += order.total;
+            if (order.payment_status === 'paid') {
+              paidAmount += order.total;
+            }
+
+            const paidClass = order.payment_status === 'paid' ? 'paid' : '';
+            const paidBadge = order.payment_status === 'paid'
+              ? '<span class="payment-badge paid">已付</span>'
+              : `<button class="btn btn-sm btn-success" onclick="markPaid('${order.id}')">確認收款</button>`;
+
+            const itemsHtml = order.items.map(item => {
+              // 統計品項
+              itemCounts[item.name] = (itemCounts[item.name] || 0) + item.quantity;
+
+              // 顯示備註
+              let noteText = '';
+              if (item.note) {
+                noteText = `<span class="item-note">（${item.note}）</span>`;
+              }
+              return `<div class="order-item-line">${item.name}${noteText} x${item.quantity} $${item.subtotal}</div>`;
+            }).join('');
+
+            html += `
+              <div class="group-order-item ${paidClass}">
+                <div class="group-order-header">
+                  <span class="group-order-user">👤 ${order.display_name}</span>
+                  <span class="group-order-total">$${order.total}</span>
+                  ${paidBadge}
+                </div>
+                <div class="group-order-items">${itemsHtml}</div>
+              </div>
+            `;
+          });
+        });
+
+        el.innerHTML = html || '<div class="orders-empty">今日尚無訂單</div>';
+
+        // 渲染統計區塊
+        if (statsEl) {
+          let statsHtml = `
+            <div class="stats-overview">
+              <div class="stat-item">
+                <span class="stat-label">訂單數</span>
+                <span class="stat-value">${orderCount}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">總金額</span>
+                <span class="stat-value">$${totalAmount}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">已收</span>
+                <span class="stat-value stats-collected">$${paidAmount}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">待收</span>
+                <span class="stat-value stats-pending">$${totalAmount - paidAmount}</span>
+              </div>
+            </div>
+          `;
+
+          const itemEntries = Object.entries(itemCounts);
+          if (itemEntries.length > 0) {
+            statsHtml += '<div class="stats-items-title">📦 品項統計</div>';
+            statsHtml += '<div class="stats-items">';
+            itemEntries.sort((a, b) => b[1] - a[1]).forEach(([name, count]) => {
+              statsHtml += `<div class="stats-item-row"><span>${name}</span><span>x${count}</span></div>`;
+            });
+            statsHtml += '</div>';
+          }
+
+          statsEl.innerHTML = statsHtml;
+        }
+      } catch (err) {
+        console.error('載入訂單失敗:', err);
+        el.innerHTML = '<div class="orders-empty">載入失敗</div>';
+        if (statsEl) statsEl.innerHTML = '';
+      }
+    }
+
+    // 確認收款
+    async function markPaid(orderId) {
+      if (!await showConfirm('確認已收款？')) return;
+
+      try {
+        const res = await fetch(`${basePath}/api/line-admin/orders/${orderId}/mark-paid`, {
+          method: 'POST',
+        });
+
+        if (res.ok) {
+          await loadOrders(); // 重新載入訂單
+        } else {
+          showNotification('操作失敗', 'error');
+        }
+      } catch (err) {
+        console.error('收款確認失敗:', err);
+        showNotification('操作失敗', 'error');
+      }
+    }
+
+    // === Socket.IO 即時更新 ===
+    const socket = io({
+      path: basePath + '/socket.io/'
+    });
+
+    socket.on('connect', () => {
+      console.log('Socket connected');
+      // 加入廣播房間
+      socket.emit('join_board', { group_id: 'all' });
+    });
+
+    socket.on('order_update', (data) => {
+      if (currentGroupId) {
+        loadOrders();
+      }
+    });
+
+    socket.on('session_status', (data) => {
+      if (currentGroupId) {
+        loadOrders();
+      }
+    });
+
+    socket.on('payment_update', (data) => {
+      if (currentGroupId) {
+        loadOrders();
+      }
+    });
+
+    socket.on('store_change', (data) => {
+      const action = data.action || 'today_stores';
+      if (action === 'store_created' || action === 'store_updated' || action === 'store_deleted') {
+        // 店家列表變更，重新載入
+        if (currentGroupCode) {
+          loadStores();
+        }
+        const actionText = action === 'store_created' ? '新增' : action === 'store_updated' ? '更新' : '刪除';
+        showNotification(`店家「${data.store_name}」已${actionText}`);
+      } else if (currentGroupId) {
+        // 今日店家變更
+        loadTodayStores();
+        showNotification('今日店家已更新');
+      }
+    });
+
+    // === 變更群組代碼功能 ===
+    function openChangeCodeModal() {
+      document.getElementById('current-group-code').value = '';
+      document.getElementById('new-group-code').value = '';
+      document.getElementById('confirm-new-group-code').value = '';
+      document.getElementById('change-group-code-result').style.display = 'none';
+      document.getElementById('change-group-code-modal').style.display = 'flex';
+    }
+
+    function closeChangeGroupCodeModal() {
+      document.getElementById('change-group-code-modal').style.display = 'none';
+    }
+
+    async function changeGroupCode() {
+      const currentCode = document.getElementById('current-group-code').value;
+      const newCode = document.getElementById('new-group-code').value;
+      const confirmCode = document.getElementById('confirm-new-group-code').value;
+      const resultEl = document.getElementById('change-group-code-result');
+
+      if (!currentCode || !newCode || !confirmCode) {
+        resultEl.className = 'change-group-code-result error';
+        resultEl.textContent = '請填寫所有欄位';
+        resultEl.style.display = 'block';
+        return;
+      }
+
+      if (newCode.length < 4 || newCode.length > 20) {
+        resultEl.className = 'change-group-code-result error';
+        resultEl.textContent = '新代碼長度需為 4-20 字元';
+        resultEl.style.display = 'block';
+        return;
+      }
+
+      if (newCode !== confirmCode) {
+        resultEl.className = 'change-group-code-result error';
+        resultEl.textContent = '兩次輸入的新代碼不一致';
+        resultEl.style.display = 'block';
+        return;
+      }
+
+      try {
+        const res = await apiFetch('/api/line-admin/change-group-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            current_code: currentCode,
+            new_code: newCode,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          resultEl.className = 'change-group-code-result success';
+          resultEl.textContent = '群組代碼變更成功！下次請使用新代碼登入。';
+          resultEl.style.display = 'block';
+          // 清空輸入
+          document.getElementById('current-group-code').value = '';
+          document.getElementById('new-group-code').value = '';
+          document.getElementById('confirm-new-group-code').value = '';
+          // 3 秒後關閉 Modal
+          setTimeout(() => {
+            closeChangeGroupCodeModal();
+          }, 3000);
+        } else {
+          resultEl.className = 'change-group-code-result error';
+          resultEl.textContent = data.detail || '群組代碼變更失敗';
+          resultEl.style.display = 'block';
+        }
+      } catch (err) {
+        console.error('群組代碼變更失敗:', err);
+        resultEl.className = 'change-group-code-result error';
+        resultEl.textContent = '群組代碼變更失敗，請稍後再試';
+        resultEl.style.display = 'block';
+      }
+    }
+
+    // === 店家 CRUD ===
+    function showCreateStoreModal() {
+      document.getElementById('create-store-modal').style.display = 'flex';
+      document.getElementById('new-store-name').value = '';
+      document.getElementById('new-store-phone').value = '';
+      document.getElementById('new-store-address').value = '';
+      document.getElementById('new-store-description').value = '';
+    }
+
+    function hideCreateStoreModal() {
+      document.getElementById('create-store-modal').style.display = 'none';
+    }
+
+    async function createStore() {
+      const name = document.getElementById('new-store-name').value.trim();
+      if (!name) {
+        showNotification('請輸入店家名稱', 'error');
+        return;
+      }
+
+      try {
+        const res = await apiFetch(`/api/line-admin/stores/by-code/${encodeURIComponent(currentGroupCode)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            phone: document.getElementById('new-store-phone').value.trim() || null,
+            address: document.getElementById('new-store-address').value.trim() || null,
+            description: document.getElementById('new-store-description').value.trim() || null,
+          }),
+        });
+
+        if (res.ok) {
+          showNotification('店家建立成功！');
+          hideCreateStoreModal();
+          await loadStores();
+        } else {
+          const data = await res.json();
+          showNotification(data.detail || '建立失敗', 'error');
+        }
+      } catch (err) {
+        console.error('建立店家失敗:', err);
+        showNotification('建立失敗', 'error');
+      }
+    }
+
+    async function confirmDeleteStore(storeId, storeName) {
+      if (!await showConfirm(`確定要刪除「${storeName}」嗎？\n此操作無法復原！`)) return;
+
+      try {
+        const res = await apiFetch(`/api/line-admin/stores/by-code/${encodeURIComponent(currentGroupCode)}/${storeId}`, {
+          method: 'DELETE',
+        });
+
+        if (res.ok) {
+          showNotification('店家已刪除');
+          await loadStores();
+        } else {
+          const data = await res.json();
+          showNotification(data.detail || '刪除失敗', 'error');
+        }
+      } catch (err) {
+        console.error('刪除店家失敗:', err);
+        showNotification('刪除失敗', 'error');
+      }
+    }
+
+    // === 菜單管理 ===
+    let currentMenuStoreId = null;  // 用於菜單面板（獨立於上傳 Modal）
+
+    async function showMenuPanel(storeId) {
+      currentMenuStoreId = storeId;
+      const store = allStores.find(s => s.id === storeId);
+
+      document.getElementById('menu-store-info').innerHTML = `<h3>${store?.name || '店家'} - 菜單管理</h3>`;
+      document.querySelector('.admin-three-columns').style.display = 'none';
+      document.getElementById('menu-manage-panel').style.display = 'block';
+      document.querySelector('.menu-upload-section').style.display = 'block';
+
+      await loadMenu();
+    }
+
+    function hideMenuPanel() {
+      document.getElementById('menu-manage-panel').style.display = 'none';
+      document.querySelector('.admin-three-columns').style.display = 'flex';
+      currentMenuStoreId = null;
+    }
+
+    async function viewMenu(storeId) {
+      currentMenuStoreId = storeId;
+      const store = allStores.find(s => s.id === storeId);
+
+      document.getElementById('menu-store-info').innerHTML = `<h3>${store?.name || '店家'} - 菜單（唯讀）</h3>`;
+      document.querySelector('.admin-three-columns').style.display = 'none';
+      document.getElementById('menu-manage-panel').style.display = 'block';
+      document.querySelector('.menu-upload-section').style.display = 'none';
+
+      await loadMenu();
+    }
+
+    async function loadMenu() {
+      const el = document.getElementById('menu-categories');
+      try {
+        const res = await apiFetch(`/api/line-admin/stores/by-code/${encodeURIComponent(currentGroupCode)}/${currentMenuStoreId}/menu`);
+        const menu = await res.json();
+
+        if (!menu.categories || menu.categories.length === 0) {
+          el.innerHTML = '<div class="orders-empty">尚無菜單</div>';
+          return;
+        }
+
+        const html = menu.categories.map(cat => `
+          <div class="menu-category">
+            <h5>${cat.name}</h5>
+            <div class="menu-items">
+              ${cat.items.map(item => `
+                <div class="menu-item">
+                  <span class="menu-item-name">${item.name}</span>
+                  <span class="menu-item-price">$${item.price}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `).join('');
+
+        el.innerHTML = html;
+      } catch (err) {
+        console.error('載入菜單失敗:', err);
+        el.innerHTML = '<div class="orders-empty">載入失敗</div>';
+      }
+    }
+
+    // === 拖放支援 ===
+    document.addEventListener('DOMContentLoaded', function() {
+      const uploadArea = document.getElementById('upload-area');
+      if (uploadArea) {
+        uploadArea.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+          uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+          e.preventDefault();
+          uploadArea.classList.remove('dragover');
+          if (e.dataTransfer.files.length > 0 && menuManager) {
+            menuManager.handleImageSelect({ target: { files: e.dataTransfer.files } });
+          }
+        });
+      }
+    });
+  </script>
+</body>
+</html>

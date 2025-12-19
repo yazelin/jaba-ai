@@ -1,0 +1,2163 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>呷爸 - 管理員</title>
+  <link rel="icon" type="image/png" href="images/jaba-sm.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="js/menu-manager.js"></script>
+  <style>
+    /* 審核詳情樣式 */
+    .review-detail {
+      margin-bottom: 15px;
+    }
+    .review-row {
+      display: flex;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #eee;
+    }
+    .review-row:last-child {
+      border-bottom: none;
+    }
+    .review-label {
+      font-weight: bold;
+      color: #666;
+      min-width: 100px;
+      flex-shrink: 0;
+    }
+    .review-value {
+      color: #333;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <!-- 登入驗證 -->
+  <div class="password-container" id="password-section">
+    <a href="board.html" class="back-link back-link-standalone">← 返回看板</a>
+    <div class="password-box">
+      <h2>🔐 管理員登入</h2>
+      <input type="text" id="username-input" placeholder="帳號" autofocus onkeypress="handlePasswordKeyPress(event)">
+      <br>
+      <input type="password" id="password-input" placeholder="密碼" onkeypress="handlePasswordKeyPress(event)">
+      <br>
+      <button class="btn btn-primary" onclick="verifyPassword()">登入</button>
+      <p class="error-msg" id="error-msg" style="display: none;"></p>
+    </div>
+  </div>
+
+  <!-- 管理介面 -->
+  <div class="container admin-container" id="manager-section" style="display: none;">
+    <!-- 標籤頁導航 -->
+    <div class="admin-tabs">
+      <button class="admin-tab active" onclick="switchTab('orders')">📦 訂單管理</button>
+      <button class="admin-tab" onclick="switchTab('stores')">🏬 店家管理</button>
+      <button class="admin-tab" onclick="switchTab('groups')">👥 群組管理</button>
+      <button class="admin-tab" onclick="switchTab('users')">👤 使用者</button>
+      <button class="admin-tab" onclick="switchTab('security')">🔒 違規記錄</button>
+      <button class="admin-tab" onclick="switchTab('settings')">⚙️ 系統設定</button>
+    </div>
+
+    <!-- 訂單管理標籤內容 -->
+    <div class="admin-tab-content active" id="tab-orders">
+      <div class="admin-two-columns">
+        <div class="admin-main-panel">
+          <!-- 今日店家資訊 -->
+          <div class="panel-card store-info-panel">
+            <div class="panel-header">
+              <span>🏪</span>
+              <span>今日店家</span>
+              <button class="btn btn-sm btn-primary" onclick="openTodayStoreModal()" style="margin-left:auto;">設定</button>
+            </div>
+            <div class="panel-content" id="store-info-content">
+              <div class="no-store-msg">尚未設定今日店家</div>
+            </div>
+          </div>
+
+          <!-- 群組選擇器 -->
+          <div class="panel-card group-selector-panel">
+            <div class="panel-header">
+              <span>👥</span>
+              <span>群組訂單管理</span>
+            </div>
+            <div class="panel-content">
+              <select id="group-selector" onchange="loadGroupOrders()">
+                <option value="">-- 選擇群組 --</option>
+              </select>
+              <button class="btn btn-sm btn-secondary" onclick="refreshGroups()" title="重新整理">🔄</button>
+            </div>
+          </div>
+
+          <!-- 群組訂單列表面板 -->
+          <div class="panel-card orders-panel">
+            <div class="panel-header">
+              <span>📦</span>
+              <span>群組訂單</span>
+            </div>
+            <div class="panel-content" id="orders-content" style="max-height: 400px;">
+              <div class="orders-empty">請選擇群組</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-side-panel">
+          <!-- 訂單統計面板 -->
+          <div class="panel-card stats-panel">
+            <div class="panel-header">
+              <span>📊</span>
+              <span>訂單統計</span>
+            </div>
+            <div class="panel-content" id="stats-content">
+              <div class="orders-empty">請選擇群組</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 店家管理標籤內容 -->
+    <div class="admin-tab-content" id="tab-stores">
+      <div class="admin-two-columns">
+        <div class="admin-main-panel">
+          <div class="panel-card stores-panel">
+            <div class="panel-header">
+              <span>🏬</span>
+              <span>店家管理</span>
+            </div>
+            <button class="menu-upload-btn" onclick="menuManager.open()">
+              📷 上傳菜單
+            </button>
+            <div class="panel-content stores-panel-content" id="stores-content" style="max-height: none;">
+              <div class="orders-empty">載入中...</div>
+            </div>
+          </div>
+        </div>
+        <div class="admin-side-panel">
+          <div class="panel-card">
+            <div class="panel-header">
+              <span>💡</span>
+              <span>使用說明</span>
+            </div>
+            <div class="panel-content" style="padding: 15px;">
+              <p style="color: #666; line-height: 1.6;">
+                • 點擊「上傳菜單」可新增店家<br>
+                • 點擊店家卡片可編輯資訊<br>
+                • 點擊菜單按鈕可查看/編輯菜單<br>
+                • 可切換啟用/停用狀態
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 群組管理標籤內容 -->
+    <div class="admin-tab-content" id="tab-groups">
+      <div class="admin-two-columns">
+        <div class="admin-main-panel">
+          <!-- 群組申請 Panel -->
+          <div class="panel-card applications-panel">
+            <div class="panel-header">
+              <span>📋</span>
+              <span>待審核申請</span>
+              <span class="admin-tab-badge" id="pending-count" style="display: none;">0</span>
+            </div>
+            <div class="panel-content" id="applications-content">
+              <div class="orders-empty">載入中...</div>
+            </div>
+          </div>
+
+          <!-- 群組列表 -->
+          <div class="panel-card">
+            <div class="panel-header">
+              <span>👥</span>
+              <span>群組列表</span>
+            </div>
+            <div class="panel-content" style="max-height: none; padding: 0;">
+              <div class="admin-toolbar">
+                <input type="text" class="search-input" id="group-search" placeholder="搜尋群組名稱或代碼..." onkeyup="searchGroups()">
+                <select id="group-status-filter" onchange="loadGroupsList()">
+                  <option value="all">全部狀態</option>
+                  <option value="active">啟用中</option>
+                  <option value="inactive">已離開</option>
+                  <option value="pending">待審核</option>
+                  <option value="suspended">已凍結</option>
+                  <option value="rejected">已拒絕</option>
+                </select>
+              </div>
+              <div class="admin-table-container">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>群組名稱</th>
+                      <th>代碼</th>
+                      <th>成員</th>
+                      <th>狀態</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="groups-table-body">
+                    <tr><td colspan="5" class="orders-empty">載入中...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="pagination" id="groups-pagination"></div>
+            </div>
+          </div>
+        </div>
+        <div class="admin-side-panel">
+          <div class="panel-card">
+            <div class="panel-header">
+              <span>📊</span>
+              <span>群組統計</span>
+            </div>
+            <div class="panel-content" id="groups-stats-content">
+              <div class="orders-empty">載入中...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 使用者管理標籤內容 -->
+    <div class="admin-tab-content" id="tab-users">
+      <div class="admin-tab-inner">
+        <div class="stats-cards" id="users-stats">
+          <div class="stat-card">
+            <div class="stat-value" id="total-users">-</div>
+            <div class="stat-label">總使用者</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="active-users">-</div>
+            <div class="stat-label">正常使用者</div>
+          </div>
+          <div class="stat-card danger">
+            <div class="stat-value" id="banned-users">-</div>
+            <div class="stat-label">已封鎖</div>
+          </div>
+        </div>
+
+        <div class="admin-toolbar">
+          <input type="text" class="search-input" id="user-search" placeholder="搜尋使用者名稱或 LINE ID..." onkeyup="debounceUserSearch()">
+          <select id="user-status-filter" onchange="loadUsersList()">
+            <option value="all">全部狀態</option>
+            <option value="active">正常</option>
+            <option value="banned">已封鎖</option>
+          </select>
+        </div>
+
+        <div class="panel-card" style="margin-top: 15px; flex: 1; display: flex; flex-direction: column; min-height: 0;">
+          <div class="admin-table-container" style="flex: 1; overflow-y: auto;">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>使用者</th>
+                  <th>LINE ID</th>
+                  <th>群組數</th>
+                  <th>訂單數</th>
+                  <th>狀態</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="users-table-body">
+                <tr><td colspan="6" class="orders-empty">載入中...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination" id="users-pagination"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 違規記錄標籤內容 -->
+    <div class="admin-tab-content" id="tab-security">
+      <div class="admin-tab-inner">
+        <div class="stats-cards" id="security-stats">
+          <div class="stat-card warning">
+            <div class="stat-value" id="today-violations">-</div>
+            <div class="stat-label">今日違規</div>
+          </div>
+          <div class="stat-card warning">
+            <div class="stat-value" id="week-violations">-</div>
+            <div class="stat-label">本週違規</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="total-violations">-</div>
+            <div class="stat-label">總違規數</div>
+          </div>
+        </div>
+
+        <div class="panel-card" style="margin-top: 15px; flex: 1; display: flex; flex-direction: column; min-height: 0;">
+          <div class="panel-header">
+            <span>🔒</span>
+            <span>違規記錄</span>
+          </div>
+          <div class="admin-table-container" style="flex: 1; overflow-y: auto;">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>時間</th>
+                  <th>使用者</th>
+                  <th>訊息內容</th>
+                  <th>觸發原因</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="security-table-body">
+                <tr><td colspan="5" class="orders-empty">載入中...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination" id="security-pagination"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 系統設定標籤內容 -->
+    <div class="admin-tab-content" id="tab-settings">
+      <div class="admin-two-columns">
+        <div class="admin-main-panel">
+          <!-- AI 提示詞管理 -->
+          <div class="panel-card prompts-panel">
+            <div class="panel-header">
+              <span>🤖</span>
+              <span>AI 提示詞</span>
+            </div>
+            <div class="panel-content" id="prompts-panel-content">
+              <div class="orders-empty">載入中...</div>
+            </div>
+          </div>
+
+          <!-- 系統維護 Panel -->
+          <div class="panel-card maintenance-panel">
+            <div class="panel-header">
+              <span>🔧</span>
+              <span>系統維護</span>
+            </div>
+            <div class="panel-content" id="maintenance-content">
+              <div class="orders-empty">載入中...</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-side-panel">
+          <!-- LINE Bot 狀態 Panel -->
+          <div class="panel-card linebot-panel">
+            <div class="panel-header">
+              <span>🤖</span>
+              <span>LINE Bot</span>
+            </div>
+            <div class="panel-content" style="padding: 10px 15px;">
+              <div class="linebot-status" id="linebot-status">
+                <span class="linebot-status-icon">🔄</span>
+                <span class="linebot-status-text">檢查中...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI 懸浮對話框按鈕 -->
+  <button class="chat-widget-btn" id="chat-widget-btn" onclick="toggleChatWidget()">
+    <img src="images/jaba-sm.png" alt="呷爸">
+  </button>
+
+  <!-- AI 懸浮對話框 -->
+  <div class="chat-widget" id="chat-widget">
+    <div class="chat-widget-header">
+      <img src="images/jaba-sm.png" alt="呷爸">
+      <h4>呷爸助手</h4>
+      <button class="close-btn" onclick="toggleChatWidget()">&times;</button>
+    </div>
+    <div class="chat-widget-messages" id="chat-widget-messages">
+      <div class="message assistant">
+        <div class="message-content">你好！我是呷爸助手。有什麼可以幫你的嗎？</div>
+      </div>
+    </div>
+    <div class="chat-widget-input">
+      <input type="text" id="chat-widget-input" placeholder="輸入訊息..." onkeypress="handleChatWidgetKeyPress(event)">
+      <button onclick="sendChatWidgetMessage()">➤</button>
+    </div>
+  </div>
+
+  <!-- 設定今日店家對話框 -->
+  <div class="modal-overlay" id="today-store-modal" style="display: none;">
+    <div class="modal-content" style="max-width: 400px;">
+      <div class="modal-header">
+        <h3>🏪 設定今日店家</h3>
+        <button class="modal-close" onclick="closeTodayStoreModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="today-store-group-name" style="margin-bottom: 15px; color: #666;"></p>
+        <div id="today-store-checkboxes" class="store-checkbox-list" style="max-height: 300px; overflow-y: auto;"></div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+        <button class="btn btn-secondary" onclick="closeTodayStoreModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveTodayStores()">確認設定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 菜單圖片上傳對話框 -->
+  <div class="modal-overlay" id="menu-upload-modal" style="display: none;">
+    <div class="modal-content menu-upload-modal">
+      <div class="modal-header">
+        <h3>📷 上傳菜單圖片</h3>
+        <button class="modal-close" onclick="menuManager.close()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- 店家選擇（在所有步驟都顯示） -->
+        <div class="store-select" style="margin-bottom: 15px;">
+          <label>選擇店家：</label>
+          <select id="target-store-select">
+            <option value="">-- 選擇現有店家 --</option>
+            <option value="__new__">+ 新增店家</option>
+          </select>
+          <input type="text" id="new-store-name-input" placeholder="輸入新店家名稱" style="display: none;">
+        </div>
+
+        <!-- 步驟 1：上傳圖片 -->
+        <div id="upload-step" class="upload-step">
+          <div class="upload-area" id="upload-area" onclick="document.getElementById('menu-image-input').click()">
+            <div class="upload-icon">📷</div>
+            <div class="upload-text">點擊或拖放圖片到這裡</div>
+            <div class="upload-hint">支援 JPG、PNG，最大 10MB</div>
+          </div>
+          <input type="file" id="menu-image-input" accept="image/jpeg,image/png" style="display: none;" onchange="menuManager.handleImageSelect(event)">
+
+          <div class="upload-preview" id="upload-preview" style="display: none;">
+            <img id="preview-image" src="" alt="預覽">
+          </div>
+
+          <div class="upload-error" id="upload-error" style="display: none;"></div>
+
+          <div class="upload-actions">
+            <button class="btn btn-secondary" id="clear-image-btn" onclick="menuManager.clearImage()" style="display: none;">清除</button>
+            <button class="btn btn-primary" id="recognize-btn" onclick="menuManager.recognize()" disabled>
+              🔍 開始辨識
+            </button>
+          </div>
+        </div>
+
+        <!-- 步驟 2：辨識中 -->
+        <div id="recognizing-step" class="upload-step" style="display: none;">
+          <div class="loading-jaba">
+            <img src="images/jaba-keyin-sm.png" alt="呷爸" class="loading-jaba-icon">
+            <div class="loading-spinner-ring"></div>
+          </div>
+          <div class="loading-text">呷爸正在努力 key 菜單...</div>
+        </div>
+
+        <!-- 步驟 3：編輯結果 -->
+        <div id="result-step" class="upload-step" style="display: none;">
+          <div class="result-warnings" id="result-warnings"></div>
+          <div class="result-editor" id="result-editor">
+            <!-- 動態生成的編輯表格（含左右兩欄：菜單+店家資訊+按鈕） -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI 提示詞編輯對話框 -->
+  <div class="modal-overlay" id="prompts-modal" style="display: none;">
+    <div class="modal-content prompts-modal">
+      <div class="modal-header">
+        <h3>🤖 AI 提示詞管理</h3>
+        <button class="modal-close" onclick="closePromptsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="prompts-list">
+          <!-- 動態生成 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 群組申請審核對話框 -->
+  <div class="modal-overlay" id="review-modal" style="display: none;">
+    <div class="modal-content review-modal">
+      <div class="modal-header">
+        <h3>📋 審核群組申請</h3>
+        <button class="modal-close" onclick="closeReviewModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="review-content">
+          <!-- 動態生成 -->
+        </div>
+        <div class="review-actions">
+          <button class="btn btn-danger" onclick="rejectApplication()">拒絕</button>
+          <button class="btn btn-primary" onclick="approveApplication()">通過</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通用詳情對話框 -->
+  <div class="modal-overlay" id="detail-modal" style="display: none;" onclick="closeDetailModal(event)">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 id="detail-modal-title">詳情</h3>
+        <button class="modal-close" onclick="hideDetailModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <pre id="detail-modal-content" style="white-space: pre-wrap; word-wrap: break-word; margin: 0; font-family: inherit; background: #f8f9fa; padding: 15px; border-radius: 8px; max-height: 400px; overflow-y: auto;"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- 確認對話框 -->
+  <div class="modal-overlay" id="confirm-modal" style="display: none;">
+    <div class="modal-content" style="max-width: 400px;">
+      <div class="modal-header">
+        <h3 id="confirm-modal-title">確認</h3>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-modal-message" style="margin: 0; white-space: pre-wrap;"></p>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+        <button class="btn" id="confirm-modal-cancel" style="background: #6c757d; color: white;">取消</button>
+        <button class="btn btn-danger" id="confirm-modal-ok">確定</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 自動偵測 base path（支援 nginx 反向代理）
+    const basePath = window.location.pathname.includes('/jaba-ai/') ? '/jaba-ai' : '';
+    const socket = io({
+      path: basePath + '/socket.io/'
+    });
+    let adminUsername = '管理員';
+    let adminToken = null;
+    let allStores = [];
+    let allGroups = [];
+    let selectedGroupId = null;
+    let currentGroupOrders = null;
+    let reviewingAppId = null;
+    let applicationsData = [];  // 存儲申請資料供審核對話框使用
+
+    // 新增變數
+    let usersPage = { offset: 0, limit: 20 };
+    let groupsListPage = { offset: 0, limit: 20 };
+    let securityPage = { offset: 0, limit: 50 };
+    let userSearchTimeout = null;
+    let groupSearchTimeout = null;
+
+    // === 標籤頁切換 ===
+    function switchTab(tabName) {
+      // 更新標籤按鈕狀態
+      document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.remove('active'));
+      document.querySelector(`.admin-tab[onclick="switchTab('${tabName}')"]`).classList.add('active');
+
+      // 更新內容顯示
+      document.querySelectorAll('.admin-tab-content').forEach(content => content.classList.remove('active'));
+      document.getElementById(`tab-${tabName}`).classList.add('active');
+
+      // 載入對應標籤的資料
+      if (tabName === 'users') {
+        loadUsersList();
+      } else if (tabName === 'groups') {
+        loadGroupsList();
+      } else if (tabName === 'security') {
+        loadSecurityLogs();
+      }
+    }
+
+    // === AI 懸浮對話框 ===
+
+    // 簡易 Markdown 解析器
+    function parseMarkdown(text) {
+      if (!text) return '';
+
+      // 先處理特殊字元轉義 (避免 XSS)
+      let html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+      // 處理程式碼區塊 (```)
+      html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+
+      // 處理行內程式碼 (`)
+      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+      // 處理粗體 (**text** 或 __text__)
+      html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+
+      // 處理斜體 (*text* 或 _text_)
+      html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+
+      // 處理標題 (### text)
+      html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+      html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+      html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>');
+
+      // 處理無序列表 (- item 或 * item)
+      html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
+      html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
+      // 處理有序列表 (1. item)
+      html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+      // 處理換行
+      html = html.replace(/\n/g, '<br>');
+
+      // 清理多餘的 <br> 在區塊元素前後
+      html = html.replace(/<br>(<\/?(ul|ol|li|pre|h[1-4])>)/g, '$1');
+      html = html.replace(/(<\/?(ul|ol|li|pre|h[1-4])>)<br>/g, '$1');
+
+      return html;
+    }
+
+    let chatWidgetHistory = [];
+
+    function toggleChatWidget() {
+      const widget = document.getElementById('chat-widget');
+      widget.classList.toggle('open');
+      if (widget.classList.contains('open')) {
+        document.getElementById('chat-widget-input').focus();
+      }
+    }
+
+    function handleChatWidgetKeyPress(event) {
+      if (event.key === 'Enter') {
+        sendChatWidgetMessage();
+      }
+    }
+
+    async function sendChatWidgetMessage() {
+      const input = document.getElementById('chat-widget-input');
+      const message = input.value.trim();
+      if (!message) return;
+
+      input.value = '';
+
+      // 顯示使用者訊息
+      addChatWidgetMessage('user', message);
+      chatWidgetHistory.push({ role: 'user', content: message });
+
+      // 顯示載入中
+      const loadingId = addChatWidgetMessage('assistant', '處理中...');
+
+      try {
+        const res = await apiFetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: message,
+            username: adminUsername,
+            is_manager: true,
+            group_id: selectedGroupId,
+            history: chatWidgetHistory.slice(-10)
+          })
+        });
+
+        const data = await res.json();
+        document.getElementById(loadingId).remove();
+
+        const reply = data.message || data.response || '（無回應）';
+        addChatWidgetMessage('assistant', reply);
+        chatWidgetHistory.push({ role: 'assistant', content: reply });
+
+        // 執行 actions
+        if (data.actions && data.actions.length > 0) {
+          data.actions.forEach(action => {
+            if (action.type === 'set_today_store') {
+              updateTodayStoreInfo();
+            }
+          });
+        }
+      } catch (err) {
+        document.getElementById(loadingId).remove();
+        addChatWidgetMessage('assistant', '發生錯誤，請稍後再試');
+      }
+    }
+
+    let chatWidgetMsgId = 0;
+    function addChatWidgetMessage(role, content) {
+      const messagesEl = document.getElementById('chat-widget-messages');
+      const id = 'cwmsg-' + (chatWidgetMsgId++);
+
+      const msgEl = document.createElement('div');
+      msgEl.id = id;
+      msgEl.className = `message ${role}`;
+
+      // AI 回應使用 Markdown 解析，使用者訊息直接顯示
+      const displayContent = role === 'assistant' ? parseMarkdown(content) : content.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      msgEl.innerHTML = `<div class="message-content">${displayContent}</div>`;
+
+      messagesEl.appendChild(msgEl);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+
+      return id;
+    }
+
+    // === 使用者管理 ===
+    async function loadUsersList() {
+      const search = document.getElementById('user-search')?.value || '';
+      const status = document.getElementById('user-status-filter')?.value || 'all';
+
+      try {
+        const res = await authFetch(`/api/admin/users?limit=${usersPage.limit}&offset=${usersPage.offset}&search=${encodeURIComponent(search)}&status=${status}`);
+        const data = await res.json();
+
+        // 更新統計
+        document.getElementById('total-users').textContent = data.total || 0;
+
+        // 計算各狀態數量（從 API 回傳的資料）
+        const activeCount = data.users.filter(u => !u.is_banned).length;
+        const bannedCount = data.users.filter(u => u.is_banned).length;
+        document.getElementById('active-users').textContent = data.total - bannedCount;
+        document.getElementById('banned-users').textContent = bannedCount;
+
+        // 渲染表格
+        const tbody = document.getElementById('users-table-body');
+        if (data.users.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="orders-empty">沒有符合的使用者</td></tr>';
+        } else {
+          tbody.innerHTML = data.users.map(user => `
+            <tr>
+              <td>
+                ${user.picture_url ? `<img src="${user.picture_url}" class="user-avatar">` : ''}
+                ${user.display_name || '未命名'}
+              </td>
+              <td style="font-size: 0.85em; color: #666;">${maskLineId(user.line_user_id)}</td>
+              <td>${user.group_count}</td>
+              <td>${user.order_count}</td>
+              <td>
+                <span class="status-badge ${user.is_banned ? 'banned' : 'active'}">
+                  ${user.is_banned ? '已封鎖' : '正常'}
+                </span>
+              </td>
+              <td class="action-btns">
+                <button class="action-btn view" onclick="viewUserDetail('${user.id}')">詳情</button>
+                ${user.is_banned
+                  ? `<button class="action-btn unban" onclick="unbanUser('${user.id}')">解封</button>`
+                  : `<button class="action-btn ban" onclick="banUser('${user.id}')">封鎖</button>`
+                }
+              </td>
+            </tr>
+          `).join('');
+        }
+
+        // 渲染分頁
+        renderPagination('users-pagination', data.total, usersPage, loadUsersList);
+      } catch (err) {
+        console.error('載入使用者失敗:', err);
+      }
+    }
+
+    function maskLineId(lineId) {
+      if (!lineId || lineId.length < 10) return lineId;
+      return lineId.substring(0, 6) + '...' + lineId.substring(lineId.length - 4);
+    }
+
+    function debounceUserSearch() {
+      clearTimeout(userSearchTimeout);
+      userSearchTimeout = setTimeout(() => {
+        usersPage.offset = 0;
+        loadUsersList();
+      }, 300);
+    }
+
+    async function banUser(userId) {
+      if (!await showConfirm('確定要封鎖此使用者嗎？')) return;
+
+      try {
+        const res = await authFetch(`/api/admin/users/${userId}/ban`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          showNotification(data.message);
+          loadUsersList();
+        }
+      } catch (err) {
+        showNotification('操作失敗', 'error');
+      }
+    }
+
+    async function unbanUser(userId) {
+      if (!await showConfirm('確定要解除封鎖嗎？')) return;
+
+      try {
+        const res = await authFetch(`/api/admin/users/${userId}/unban`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          showNotification(data.message);
+          loadUsersList();
+        }
+      } catch (err) {
+        showNotification('操作失敗', 'error');
+      }
+    }
+
+    async function viewUserDetail(userId) {
+      try {
+        const res = await authFetch(`/api/admin/users/${userId}`);
+        const user = await res.json();
+
+        const content = `名稱：${user.display_name}\nLINE ID：${user.line_user_id}\n群組數：${user.group_count}\n訂單數：${user.order_count}\n狀態：${user.is_banned ? '已封鎖' : '正常'}`;
+        showDetailModal('👤 使用者詳情', content);
+      } catch (err) {
+        showNotification('載入失敗', 'error');
+      }
+    }
+
+    // === 群組管理 ===
+    function getGroupStatusText(status) {
+      const statusMap = {
+        'active': '啟用中',
+        'inactive': '已離開',
+        'pending': '待審核',
+        'suspended': '已凍結',
+        'rejected': '已拒絕'
+      };
+      return statusMap[status] || status;
+    }
+
+    function getGroupActionButtons(group) {
+      let buttons = '';
+      switch (group.status) {
+        case 'active':
+          buttons = `<button class="action-btn ban" onclick="suspendGroup('${group.id}')">凍結</button>`;
+          break;
+        case 'inactive':
+          buttons = `<button class="action-btn unban" onclick="activateGroup('${group.id}')">啟用</button>`;
+          break;
+        case 'suspended':
+          buttons = `<button class="action-btn unban" onclick="activateGroup('${group.id}')">解凍</button>`;
+          break;
+        case 'pending':
+          buttons = ''; // 待審核在申請管理處理
+          break;
+        case 'rejected':
+          buttons = `<button class="action-btn unban" onclick="activateGroup('${group.id}')">啟用</button>`;
+          break;
+        default:
+          buttons = '';
+      }
+      // 所有狀態都可以刪除
+      buttons += ` <button class="action-btn delete" onclick="deleteGroup('${group.id}', '${(group.name || '').replace(/'/g, "\\'")}')">刪除</button>`;
+      return buttons;
+    }
+
+    async function loadGroupsList() {
+      const search = document.getElementById('group-search')?.value || '';
+      const status = document.getElementById('group-status-filter')?.value || 'all';
+
+      try {
+        const res = await authFetch(`/api/admin/groups/list?limit=${groupsListPage.limit}&offset=${groupsListPage.offset}&search=${encodeURIComponent(search)}&status=${status}`);
+        const data = await res.json();
+
+        // 更新統計
+        const statsEl = document.getElementById('groups-stats-content');
+        const activeCount = data.groups.filter(g => g.status === 'active').length;
+        statsEl.innerHTML = `
+          <div style="text-align: center; padding: 10px;">
+            <div style="font-size: 2em; color: #8B6914; font-weight: bold;">${data.total}</div>
+            <div style="color: #666;">總群組數</div>
+          </div>
+        `;
+
+        // 渲染表格
+        const tbody = document.getElementById('groups-table-body');
+        if (data.groups.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="orders-empty">沒有符合的群組</td></tr>';
+        } else {
+          tbody.innerHTML = data.groups.map(group => `
+            <tr>
+              <td>
+                <div><strong>${group.application_name || group.name || '未命名'}</strong></div>
+                ${group.application_name && group.name && group.application_name !== group.name
+                  ? `<div style="font-size: 12px; color: #666;">LINE: ${group.name}</div>`
+                  : ''}
+              </td>
+              <td style="font-family: monospace;">${group.group_code || '-'}</td>
+              <td>${group.member_count} / ${group.admin_count} 管理</td>
+              <td>
+                <span class="status-badge ${group.status}">
+                  ${getGroupStatusText(group.status)}
+                </span>
+              </td>
+              <td class="action-btns">
+                <button class="action-btn view" onclick="viewGroupDetail('${group.id}')">詳情</button>
+                ${getGroupActionButtons(group)}
+              </td>
+            </tr>
+          `).join('');
+        }
+
+        // 渲染分頁
+        renderPagination('groups-pagination', data.total, groupsListPage, loadGroupsList);
+      } catch (err) {
+        console.error('載入群組失敗:', err);
+      }
+    }
+
+    function searchGroups() {
+      clearTimeout(groupSearchTimeout);
+      groupSearchTimeout = setTimeout(() => {
+        groupsListPage.offset = 0;
+        loadGroupsList();
+      }, 300);
+    }
+
+    async function suspendGroup(groupId) {
+      if (!await showConfirm('確定要凍結此群組嗎？')) return;
+
+      try {
+        const res = await authFetch(`/api/admin/groups/${groupId}/suspend`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          showNotification(data.message);
+          await loadGroupsList();
+          await loadGroups();
+        } else {
+          showNotification(data.detail || '操作失敗', 'error');
+        }
+      } catch (err) {
+        showNotification('操作失敗', 'error');
+      }
+    }
+
+    async function activateGroup(groupId) {
+      if (!await showConfirm('確定要啟用此群組嗎？')) return;
+
+      try {
+        const res = await authFetch(`/api/admin/groups/${groupId}/activate`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          showNotification(data.message);
+          await loadGroupsList();
+          await loadGroups();
+        } else {
+          showNotification(data.detail || '操作失敗', 'error');
+        }
+      } catch (err) {
+        showNotification('操作失敗', 'error');
+      }
+    }
+
+    async function deleteGroup(groupId, groupName) {
+      if (!await showConfirm(`確定要刪除群組「${groupName || groupId}」嗎？\n\n刪除後群組將不會顯示在列表中，但資料會保留（可由開發人員恢復）。`)) return;
+
+      try {
+        const res = await authFetch(`/api/admin/groups/${groupId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+          showNotification(data.message);
+          await loadGroupsList();
+          await loadGroups();
+        } else {
+          showNotification(data.detail || '刪除失敗', 'error');
+        }
+      } catch (err) {
+        showNotification('刪除失敗', 'error');
+      }
+    }
+
+    async function viewGroupDetail(groupId) {
+      try {
+        const res = await authFetch(`/api/admin/groups/${groupId}/detail`);
+        const group = await res.json();
+
+        const membersList = group.members.map(m => `${m.display_name || '未命名'}${m.is_admin ? ' (管理員)' : ''}`).join('\n');
+        const content = `名稱：${group.name}\n代碼：${group.group_code}\n成員數：${group.member_count}\n\n成員列表：\n${membersList || '無成員'}`;
+        showDetailModal('👥 群組詳情', content);
+      } catch (err) {
+        showNotification('載入失敗', 'error');
+      }
+    }
+
+    // === 違規記錄 ===
+    async function loadSecurityLogs() {
+      try {
+        // 載入統計
+        const statsRes = await authFetch('/api/admin/security-logs/stats');
+        const stats = await statsRes.json();
+
+        document.getElementById('today-violations').textContent = stats.today_count || 0;
+        document.getElementById('week-violations').textContent = stats.week_count || 0;
+        document.getElementById('total-violations').textContent = stats.total_count || 0;
+
+        // 載入列表
+        const res = await authFetch(`/api/admin/security-logs?limit=${securityPage.limit}&offset=${securityPage.offset}`);
+        const data = await res.json();
+
+        // 存儲日誌內容供查看
+        window.securityLogMessages = {};
+        data.logs.forEach((log, idx) => {
+          window.securityLogMessages[idx] = log.original_message;
+        });
+
+        const tbody = document.getElementById('security-table-body');
+        if (data.logs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="orders-empty">沒有違規記錄</td></tr>';
+        } else {
+          tbody.innerHTML = data.logs.map((log, idx) => `
+            <tr>
+              <td style="font-size: 0.85em;">${formatDateTime(log.created_at)}</td>
+              <td>${log.display_name || '未知'}</td>
+              <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(log.original_message)}">
+                ${escapeHtml(log.original_message.substring(0, 50))}${log.original_message.length > 50 ? '...' : ''}
+              </td>
+              <td>
+                <div class="violation-reasons">
+                  ${log.trigger_reasons.map(r => `<span class="violation-tag">${r}</span>`).join('')}
+                </div>
+              </td>
+              <td>
+                <button class="action-btn view" onclick="viewSecurityLog(${idx})">查看</button>
+              </td>
+            </tr>
+          `).join('');
+        }
+
+        renderPagination('security-pagination', data.total, securityPage, loadSecurityLogs);
+      } catch (err) {
+        console.error('載入違規記錄失敗:', err);
+      }
+    }
+
+    function viewSecurityLog(idx) {
+      const message = window.securityLogMessages?.[idx] || '無法載入訊息';
+      showDetailModal('📝 原始訊息', message);
+    }
+
+    // === 通用函數 ===
+    function formatDateTime(isoString) {
+      if (!isoString) return '-';
+      const d = new Date(isoString);
+      return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function renderPagination(containerId, total, pageState, loadFunc) {
+      const container = document.getElementById(containerId);
+      const totalPages = Math.ceil(total / pageState.limit);
+      const currentPage = Math.floor(pageState.offset / pageState.limit) + 1;
+
+      container.innerHTML = `
+        <button ${currentPage <= 1 ? 'disabled' : ''} onclick="changePage('${containerId}', -1)">上一頁</button>
+        <span class="page-info">第 ${currentPage} / ${totalPages || 1} 頁（共 ${total} 筆）</span>
+        <button ${currentPage >= totalPages ? 'disabled' : ''} onclick="changePage('${containerId}', 1)">下一頁</button>
+      `;
+
+      // 儲存 loadFunc 供分頁按鈕使用
+      container.dataset.loadFunc = loadFunc.name;
+    }
+
+    function changePage(containerId, direction) {
+      const container = document.getElementById(containerId);
+      const funcName = container.dataset.loadFunc;
+
+      if (containerId === 'users-pagination') {
+        usersPage.offset += direction * usersPage.limit;
+        if (usersPage.offset < 0) usersPage.offset = 0;
+        loadUsersList();
+      } else if (containerId === 'groups-pagination') {
+        groupsListPage.offset += direction * groupsListPage.limit;
+        if (groupsListPage.offset < 0) groupsListPage.offset = 0;
+        loadGroupsList();
+      } else if (containerId === 'security-pagination') {
+        securityPage.offset += direction * securityPage.limit;
+        if (securityPage.offset < 0) securityPage.offset = 0;
+        loadSecurityLogs();
+      }
+    }
+
+    // === 帶認證的 fetch ===
+    function authFetch(url, options = {}) {
+      if (!options.headers) {
+        options.headers = {};
+      }
+      if (adminToken) {
+        options.headers['Authorization'] = `Bearer ${adminToken}`;
+      }
+      return fetch(basePath + url, options);
+    }
+
+    // === 一般 fetch（加上 basePath）===
+    function apiFetch(url, options = {}) {
+      return fetch(basePath + url, options);
+    }
+
+    // === 登入驗證 ===
+    function handlePasswordKeyPress(event) {
+      if (event.key === 'Enter') {
+        verifyPassword();
+      }
+    }
+
+    async function verifyPassword() {
+      const username = document.getElementById('username-input').value;
+      const password = document.getElementById('password-input').value;
+      const errorMsg = document.getElementById('error-msg');
+
+      if (!username || !password) {
+        errorMsg.textContent = '請輸入帳號和密碼';
+        errorMsg.style.display = 'block';
+        return;
+      }
+
+      try {
+        const res = await apiFetch('/api/admin/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+          adminToken = data.token;
+          adminUsername = data.username || username;
+
+          document.getElementById('password-section').style.display = 'none';
+          document.getElementById('manager-section').style.display = 'flex';
+
+          // 加入超管房間以接收申請即時更新
+          socket.emit('join_admin');
+
+          // 載入資料
+          loadAllStores();
+          loadGroups();
+          loadApplications();
+          loadPromptsPanel();
+          loadMaintenanceStats();
+          startLineBotCheck();  // 開始 LINE Bot 狀態檢查
+
+          // 初始化菜單管理模組
+          menuManager = new MenuManager({
+            fetchFn: authFetch,
+            showNotification: showNotification,
+            getStores: () => allStores,
+            onMenuSaved: loadAllStores,
+            apiPrefix: '/api/admin',
+            groupCode: null,  // 超管不需要 group code
+            filterEditableStores: stores => stores,  // 超管可編輯所有店家
+            elements: {
+              newStoreName: 'new-store-name-input',
+            }
+          });
+          menuManager.init();
+
+          // 顯示歡迎通知
+          showNotification(`歡迎回來，${adminUsername}！`);
+        } else {
+          errorMsg.textContent = data.detail || '帳號或密碼錯誤';
+          errorMsg.style.display = 'block';
+        }
+      } catch (err) {
+        errorMsg.textContent = '驗證失敗，請稍後再試';
+        errorMsg.style.display = 'block';
+        console.error(err);
+      }
+    }
+
+    // === 店家管理 ===
+    async function loadAllStores() {
+      try {
+        const res = await authFetch('/api/admin/stores');
+        allStores = await res.json();
+        updateStoresPanel(allStores);
+        updateTodayStoreInfo();
+      } catch (err) {
+        console.error('載入店家失敗:', err);
+        document.getElementById('stores-content').innerHTML = '<div class="orders-empty">載入失敗</div>';
+      }
+    }
+
+    function updateStoresPanel(stores) {
+      const content = document.getElementById('stores-content');
+      if (!stores || stores.length === 0) {
+        content.innerHTML = '<div class="orders-empty">尚無店家資料</div>';
+        return;
+      }
+
+      // 排序：先全局後專屬，先啟用後停用
+      stores.sort((a, b) => {
+        if (a.scope !== b.scope) return a.scope === 'global' ? -1 : 1;
+        if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      let html = '';
+      stores.forEach((store, index) => {
+        const isActive = store.is_active !== false;
+
+        const scopeTag = store.scope === 'global'
+          ? '<span class="scope-tag global">全局</span>'
+          : `<span class="scope-tag group">專屬</span>`;
+
+        // 啟用/停用 icon
+        const toggleIcon = isActive
+          ? `<span class="store-icon-btn active" onclick="event.stopPropagation(); toggleStoreActive('${store.id}')" title="點擊停用">✅</span>`
+          : `<span class="store-icon-btn inactive" onclick="event.stopPropagation(); toggleStoreActive('${store.id}')" title="點擊啟用">⏸️</span>`;
+
+        // 刪除 icon
+        const deleteIcon = `<span class="store-icon-btn delete" onclick="event.stopPropagation(); confirmDeleteStore('${store.id}', '${store.name.replace(/'/g, "\\'")}')" title="刪除店家">🗑️</span>`;
+
+        html += `
+          <div class="store-manage-item">
+            <div class="store-manage-header" onclick="toggleStoreMenu('${store.id}', ${index})">
+              <div class="store-manage-info">
+                ${scopeTag}
+                ${toggleIcon}
+                ${deleteIcon}
+                <span class="store-manage-name">${store.name}</span>
+                <span class="store-edit-btn" onclick="event.stopPropagation(); menuManager.editExisting('${store.id}')">菜單</span>
+              </div>
+              <span class="store-manage-toggle" id="toggle-${index}">▼</span>
+            </div>
+            <div class="store-manage-detail" id="store-menu-${index}" style="display: none;" data-store-id="${store.id}" data-loaded="false">
+              <div class="store-manage-meta">
+                ${store.phone ? `<div>電話: ${store.phone}</div>` : ''}
+                ${store.note ? `<div class="store-manage-note">📌 ${store.note}</div>` : ''}
+              </div>
+              <div class="store-menu-content" id="store-menu-content-${index}">
+                <div class="loading-text">載入中...</div>
+              </div>
+              <div class="store-menu-actions" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee;">
+                <button class="btn btn-danger btn-sm" onclick="deleteMenu('${store.id}')">刪除菜單</button>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      content.innerHTML = html;
+    }
+
+    async function toggleStoreActive(storeId) {
+      const store = allStores.find(s => s.id === storeId);
+      if (!store) return;
+
+      try {
+        const res = await authFetch(`/api/admin/stores/${storeId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ is_active: !store.is_active })
+        });
+
+        if (res.ok) {
+          await loadAllStores();
+        }
+      } catch (err) {
+        console.error('切換店家狀態失敗:', err);
+      }
+    }
+
+    // === 刪除店家 ===
+    async function confirmDeleteStore(storeId, storeName) {
+      if (!await showConfirm(`確定要刪除「${storeName}」嗎？\n此操作無法復原！`)) return;
+
+      try {
+        const res = await authFetch(`/api/admin/stores/${storeId}`, {
+          method: 'DELETE',
+        });
+
+        if (res.ok) {
+          showNotification('店家已刪除');
+          await loadAllStores();
+        } else {
+          const data = await res.json();
+          showNotification(data.detail || '刪除失敗', 'error');
+        }
+      } catch (err) {
+        console.error('刪除店家失敗:', err);
+        showNotification('刪除失敗', 'error');
+      }
+    }
+
+    async function deleteMenu(storeId) {
+      if (!await showConfirm('確定要刪除此店家的菜單嗎？店家資料會保留。')) return;
+
+      try {
+        const res = await authFetch(`/api/admin/stores/${storeId}/menu`, {
+          method: 'DELETE',
+        });
+
+        if (res.ok) {
+          showNotification('菜單已刪除');
+          await loadAllStores();
+        } else {
+          const data = await res.json();
+          showNotification(data.detail || '刪除失敗', 'error');
+        }
+      } catch (err) {
+        console.error('刪除菜單失敗:', err);
+        showNotification('刪除失敗', 'error');
+      }
+    }
+
+    async function toggleStoreMenu(storeId, index) {
+      const menuEl = document.getElementById(`store-menu-${index}`);
+      const toggleEl = document.getElementById(`toggle-${index}`);
+      const contentEl = document.getElementById(`store-menu-content-${index}`);
+
+      if (menuEl.style.display === 'none') {
+        menuEl.style.display = 'block';
+        toggleEl.textContent = '▲';
+
+        // 載入菜單（如果還沒載入過）
+        if (menuEl.dataset.loaded === 'false') {
+          try {
+            const res = await authFetch(`/api/admin/stores/${storeId}/menu/compare`);
+            const menu = await res.json();
+
+            if (menu && menu.categories && menu.categories.length > 0) {
+              let html = '<div class="store-manage-menu">';
+              menu.categories.forEach(cat => {
+                html += `<div class="menu-cat-title">${cat.name}</div>
+                  <div class="menu-cat-items">`;
+                cat.items.forEach(item => {
+                  const priceStr = item.variants && item.variants.length > 0
+                    ? item.variants.map(v => `${v.name}$${v.price}`).join(' / ')
+                    : `$${item.price}`;
+                  const availClass = item.is_available === false ? ' unavailable' : '';
+                  html += `<div class="menu-cat-item${availClass}">
+                    <span>${item.name}</span>
+                    <span>${priceStr}</span>
+                  </div>`;
+                });
+                html += '</div>';
+              });
+              html += '</div>';
+              contentEl.innerHTML = html;
+            } else {
+              contentEl.innerHTML = '<div class="no-menu-msg">尚無菜單</div>';
+            }
+            menuEl.dataset.loaded = 'true';
+          } catch (err) {
+            console.error('載入菜單失敗:', err);
+            contentEl.innerHTML = '<div class="orders-empty">載入失敗</div>';
+          }
+        }
+      } else {
+        menuEl.style.display = 'none';
+        toggleEl.textContent = '▼';
+      }
+    }
+
+    async function updateTodayStoreInfo() {
+      const content = document.getElementById('store-info-content');
+      const selectedGroupId = document.getElementById('group-selector').value;
+
+      // 從 board API 取得今日店家
+      try {
+        const res = await apiFetch('/api/board/today-stores');
+        const data = await res.json();
+
+        // 如果有選擇群組，只顯示該群組的店家
+        if (selectedGroupId) {
+          const groupData = data.find(g => g.group_id === selectedGroupId);
+          if (groupData && groupData.stores.length > 0) {
+            content.innerHTML = groupData.stores.map(s => `<div class="store-title">${s.store_name}</div>`).join('');
+          } else {
+            content.innerHTML = '<div class="no-store-msg">此群組尚未設定今日店家</div>';
+          }
+        } else {
+          // 沒有選擇群組時，按群組分開顯示
+          if (data.length === 0) {
+            content.innerHTML = '<div class="no-store-msg">尚未設定今日店家</div>';
+            return;
+          }
+
+          let html = '';
+          data.forEach(groupData => {
+            const groupName = groupData.group_name || `群組 ${groupData.group_id.slice(-8)}`;
+            const stores = groupData.stores.map(s => s.store_name).join('、') || '未設定';
+            html += `<div class="store-title"><small>${groupName}：</small>${stores}</div>`;
+          });
+          content.innerHTML = html || '<div class="no-store-msg">尚未設定今日店家</div>';
+        }
+      } catch (err) {
+        content.innerHTML = '<div class="no-store-msg">載入失敗</div>';
+      }
+    }
+
+    // === 今日店家設定 ===
+    function openTodayStoreModal() {
+      if (!selectedGroupId) {
+        showNotification('請先選擇群組', 'error');
+        return;
+      }
+
+      // 找到選中的群組名稱
+      const group = allGroups.find(g => g.id === selectedGroupId);
+      const groupName = group ? (group.name || `群組 ...${group.line_group_id.slice(-8)}`) : '未知群組';
+      document.getElementById('today-store-group-name').textContent = `設定「${groupName}」的今日店家：`;
+
+      // 渲染店家 checkbox 列表
+      renderTodayStoreCheckboxes();
+
+      // 顯示 modal
+      document.getElementById('today-store-modal').style.display = 'flex';
+    }
+
+    function closeTodayStoreModal() {
+      document.getElementById('today-store-modal').style.display = 'none';
+    }
+
+    async function renderTodayStoreCheckboxes() {
+      const container = document.getElementById('today-store-checkboxes');
+
+      // 取得該群組目前的今日店家
+      let currentStoreIds = [];
+      try {
+        const res = await authFetch(`/api/admin/groups/${selectedGroupId}/today-stores`);
+        const todayStores = await res.json();
+        currentStoreIds = todayStores.map(s => s.store_id);
+      } catch (err) {
+        console.error('取得今日店家失敗:', err);
+      }
+
+      // 渲染所有店家的 checkbox
+      container.innerHTML = allStores
+        .filter(store => store.is_active)
+        .map(store => {
+          const checked = currentStoreIds.includes(store.id) ? 'checked' : '';
+          return `
+            <label style="display: block; margin-bottom: 8px; cursor: pointer;">
+              <input type="checkbox" value="${store.id}" ${checked} style="margin-right: 8px;">
+              ${store.name}
+            </label>
+          `;
+        }).join('');
+    }
+
+    async function saveTodayStores() {
+      const checkboxes = document.querySelectorAll('#today-store-checkboxes input:checked');
+      const storeIds = Array.from(checkboxes).map(cb => cb.value);
+
+      if (storeIds.length === 0) {
+        showNotification('請至少選擇一個店家', 'error');
+        return;
+      }
+
+      try {
+        const res = await authFetch(`/api/admin/groups/${selectedGroupId}/today-stores`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ store_ids: storeIds }),
+        });
+
+        if (res.ok) {
+          showNotification('今日店家設定成功！');
+          closeTodayStoreModal();
+          updateTodayStoreInfo();
+        } else {
+          showNotification('設定失敗', 'error');
+        }
+      } catch (err) {
+        console.error('設定今日店家失敗:', err);
+        showNotification('設定失敗', 'error');
+      }
+    }
+
+    // === 群組管理 ===
+    async function loadGroups() {
+      try {
+        const res = await authFetch('/api/admin/groups');
+        allGroups = await res.json();
+        updateGroupSelector();
+      } catch (err) {
+        console.error('載入群組失敗:', err);
+      }
+    }
+
+    function refreshGroups() {
+      loadGroups();
+      if (selectedGroupId) {
+        loadGroupOrders();
+      }
+      showNotification('已重新整理');
+    }
+
+    function updateGroupSelector() {
+      const select = document.getElementById('group-selector');
+      let html = '<option value="">-- 選擇群組 --</option>';
+
+      allGroups.forEach(group => {
+        const selected = group.id === selectedGroupId ? 'selected' : '';
+        const displayName = group.name || `群組 ...${group.line_group_id.slice(-8)}`;
+        html += `<option value="${group.id}" ${selected}>${displayName}</option>`;
+      });
+
+      select.innerHTML = html;
+    }
+
+    async function loadGroupOrders() {
+      const groupId = document.getElementById('group-selector').value;
+      selectedGroupId = groupId;
+
+      // 更新今日店家顯示（根據選擇的群組）
+      updateTodayStoreInfo();
+
+      if (!groupId) {
+        document.getElementById('orders-content').innerHTML = '<div class="orders-empty">請選擇群組</div>';
+        document.getElementById('stats-content').innerHTML = '<div class="orders-empty">請選擇群組</div>';
+        currentGroupOrders = null;
+        return;
+      }
+
+      try {
+        const res = await authFetch(`/api/admin/groups/${groupId}/orders`);
+        const data = await res.json();
+        currentGroupOrders = data;
+
+        updateGroupOrdersPanel(data);
+        updateGroupStatsPanel(data);
+      } catch (err) {
+        console.error('載入群組訂單失敗:', err);
+        document.getElementById('orders-content').innerHTML = '<div class="orders-empty">載入失敗</div>';
+      }
+    }
+
+    function updateGroupOrdersPanel(sessions) {
+      const content = document.getElementById('orders-content');
+
+      if (!sessions || sessions.length === 0) {
+        content.innerHTML = '<div class="orders-empty">該群組尚無訂單</div>';
+        return;
+      }
+
+      let html = '';
+      sessions.forEach(session => {
+        const orders = session.orders || [];
+        orders.forEach(order => {
+          const displayName = order.display_name || '未知';
+          const itemsHtml = order.items.map(item => {
+            let text = item.quantity > 1 ? `${item.name} x${item.quantity}` : item.name;
+            let noteText = item.note ? `<span class="item-note">（${item.note}）</span>` : '';
+            return `<div class="order-item-line">${text}${noteText} $${item.subtotal}</div>`;
+          }).join('');
+
+          const paidClass = order.payment_status === 'paid' ? 'paid' : '';
+          const paidBadge = order.payment_status === 'paid'
+            ? '<span class="payment-badge paid">已付</span>'
+            : `<button class="btn btn-sm btn-primary" onclick="markPaid('${order.id}')">確認付款</button>`;
+
+          html += `
+            <div class="group-order-item ${paidClass}">
+              <div class="group-order-header">
+                <span class="group-order-user">👤 ${displayName}</span>
+                <span class="group-order-total">$${order.total}</span>
+                ${paidBadge}
+              </div>
+              <div class="group-order-items">${itemsHtml}</div>
+            </div>
+          `;
+        });
+      });
+
+      content.innerHTML = html || '<div class="orders-empty">該群組尚無訂單</div>';
+    }
+
+    function updateGroupStatsPanel(sessions) {
+      const content = document.getElementById('stats-content');
+
+      // 統計
+      let totalAmount = 0;
+      let paidAmount = 0;
+      let orderCount = 0;
+      const itemCounts = {};
+
+      sessions.forEach(session => {
+        (session.orders || []).forEach(order => {
+          orderCount++;
+          totalAmount += order.total;
+          if (order.payment_status === 'paid') {
+            paidAmount += order.total;
+          }
+
+          (order.items || []).forEach(item => {
+            const key = item.name;
+            itemCounts[key] = (itemCounts[key] || 0) + item.quantity;
+          });
+        });
+      });
+
+      let html = `
+        <div class="stats-overview">
+          <div class="stat-item">
+            <span class="stat-label">訂單數</span>
+            <span class="stat-value">${orderCount}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">總金額</span>
+            <span class="stat-value">$${totalAmount}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">已收</span>
+            <span class="stat-value stats-collected">$${paidAmount}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">待收</span>
+            <span class="stat-value stats-pending">$${totalAmount - paidAmount}</span>
+          </div>
+        </div>
+      `;
+
+      const itemEntries = Object.entries(itemCounts);
+      if (itemEntries.length > 0) {
+        html += '<div class="stats-items-title">📦 品項統計</div>';
+        html += '<div class="stats-items">';
+        itemEntries.sort((a, b) => b[1] - a[1]).forEach(([name, count]) => {
+          html += `<div class="stats-item-row"><span>${name}</span><span>x${count}</span></div>`;
+        });
+        html += '</div>';
+      }
+
+      content.innerHTML = html;
+    }
+
+    async function markPaid(orderId) {
+      try {
+        const res = await authFetch(`/api/admin/orders/${orderId}/mark-paid`, {
+          method: 'POST'
+        });
+
+        if (res.ok) {
+          showNotification('已標記付款');
+          await loadGroupOrders();
+        }
+      } catch (err) {
+        console.error('標記付款失敗:', err);
+        showNotification('操作失敗');
+      }
+    }
+
+    // === 群組申請 ===
+    async function loadApplications() {
+      try {
+        const res = await authFetch('/api/admin/applications?status=pending');
+        if (!res.ok) {
+          console.error('載入申請失敗:', res.status);
+          return;
+        }
+        const applications = await res.json();
+        updateApplicationsPanel(applications);
+      } catch (err) {
+        console.error('載入申請失敗:', err);
+      }
+    }
+
+    function updateApplicationsPanel(applications) {
+      const content = document.getElementById('applications-content');
+      applicationsData = applications || [];  // 保存申請資料
+
+      if (!applications || applications.length === 0) {
+        content.innerHTML = '<div class="orders-empty">無待審核申請</div>';
+        return;
+      }
+
+      let html = '';
+      applications.forEach(app => {
+        html += `
+          <div class="application-item" onclick="openReviewModal('${app.id}')">
+            <div class="application-name">${app.group_name}</div>
+            <div class="application-info">
+              <span>聯絡資訊：${app.contact_info || '-'}</span>
+              <span class="application-date">${new Date(app.created_at).toLocaleDateString()}</span>
+            </div>
+          </div>
+        `;
+      });
+
+      content.innerHTML = html;
+    }
+
+    function openReviewModal(appId) {
+      reviewingAppId = appId;
+      // 從 applicationsData 找到對應的申請資料
+      const app = applicationsData.find(a => a.id === appId);
+
+      if (!app) {
+        document.getElementById('review-content').innerHTML = `
+          <p>找不到申請資料</p>
+        `;
+        document.getElementById('review-modal').style.display = 'flex';
+        return;
+      }
+
+      // 顯示詳盡的申請資訊
+      const createdAt = new Date(app.created_at).toLocaleString('zh-TW');
+      document.getElementById('review-content').innerHTML = `
+        <div class="review-detail">
+          <div class="review-row">
+            <span class="review-label">群組名稱：</span>
+            <span class="review-value">${app.group_name || '-'}</span>
+          </div>
+          <div class="review-row">
+            <span class="review-label">聯絡資訊：</span>
+            <span class="review-value">${app.contact_info || '-'}</span>
+          </div>
+          <div class="review-row">
+            <span class="review-label">LINE 群組 ID：</span>
+            <span class="review-value" style="font-size: 12px; word-break: break-all;">${app.line_group_id}</span>
+          </div>
+          <div class="review-row">
+            <span class="review-label">群組代碼：</span>
+            <span class="review-value">${app.group_code || '-'}</span>
+          </div>
+          <div class="review-row">
+            <span class="review-label">申請時間：</span>
+            <span class="review-value">${createdAt}</span>
+          </div>
+        </div>
+        <textarea id="review-note" placeholder="審核備註（選填）"></textarea>
+      `;
+      document.getElementById('review-modal').style.display = 'flex';
+    }
+
+    function closeReviewModal() {
+      reviewingAppId = null;
+      document.getElementById('review-modal').style.display = 'none';
+    }
+
+    async function approveApplication() {
+      if (!reviewingAppId) return;
+
+      const note = document.getElementById('review-note').value;
+
+      try {
+        const res = await authFetch(`/api/admin/applications/${reviewingAppId}/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'approved', note })
+        });
+
+        if (res.ok) {
+          showNotification('已通過申請');
+          closeReviewModal();
+          await loadApplications();
+          await loadGroups();
+          await loadGroupsList();  // 刷新分頁列表
+        }
+      } catch (err) {
+        console.error('審核失敗:', err);
+        showNotification('操作失敗');
+      }
+    }
+
+    async function rejectApplication() {
+      if (!reviewingAppId) return;
+
+      const note = document.getElementById('review-note').value;
+
+      try {
+        const res = await authFetch(`/api/admin/applications/${reviewingAppId}/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'rejected', note })
+        });
+
+        if (res.ok) {
+          showNotification('已拒絕申請');
+          closeReviewModal();
+          await loadApplications();
+          await loadGroupsList();  // 刷新分頁列表
+        }
+      } catch (err) {
+        console.error('審核失敗:', err);
+        showNotification('操作失敗');
+      }
+    }
+
+    // === AI 提示詞管理 ===
+    async function loadPromptsPanel() {
+      const content = document.getElementById('prompts-panel-content');
+      try {
+        const res = await authFetch('/api/admin/prompts');
+        const prompts = await res.json();
+
+        if (!prompts || prompts.length === 0) {
+          content.innerHTML = '<div class="orders-empty">尚無提示詞</div>';
+          return;
+        }
+
+        let html = '<div class="prompts-list">';
+        prompts.forEach(prompt => {
+          html += `
+            <div class="prompt-list-item" onclick="openPromptsModal('${prompt.name}')">
+              <span class="prompt-list-name">${prompt.name}</span>
+              <span class="prompt-list-edit">✏️</span>
+            </div>
+          `;
+        });
+        html += '</div>';
+        content.innerHTML = html;
+      } catch (err) {
+        console.error('載入提示詞失敗:', err);
+        content.innerHTML = '<div class="orders-empty">載入失敗</div>';
+      }
+    }
+
+    async function openPromptsModal() {
+      try {
+        const res = await authFetch('/api/admin/prompts');
+        const prompts = await res.json();
+
+        let html = '';
+        prompts.forEach(prompt => {
+          html += `
+            <div class="prompt-item">
+              <div class="prompt-name">${prompt.name}</div>
+              <textarea id="prompt-${prompt.name}" class="prompt-textarea">${prompt.content}</textarea>
+              <button class="btn btn-sm btn-primary" onclick="savePrompt('${prompt.name}')">儲存</button>
+            </div>
+          `;
+        });
+
+        document.getElementById('prompts-list').innerHTML = html || '<p>尚無提示詞</p>';
+        document.getElementById('prompts-modal').style.display = 'flex';
+      } catch (err) {
+        console.error('載入提示詞失敗:', err);
+        showNotification('載入失敗');
+      }
+    }
+
+    function closePromptsModal() {
+      document.getElementById('prompts-modal').style.display = 'none';
+    }
+
+    async function savePrompt(name) {
+      const content = document.getElementById(`prompt-${name}`).value;
+
+      try {
+        const res = await authFetch(`/api/admin/prompts/${name}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content })
+        });
+
+        if (res.ok) {
+          showNotification('提示詞已儲存');
+        }
+      } catch (err) {
+        console.error('儲存提示詞失敗:', err);
+        showNotification('儲存失敗');
+      }
+    }
+
+    // === 拖放支援 ===
+    document.addEventListener('DOMContentLoaded', function() {
+      const uploadArea = document.getElementById('upload-area');
+      if (uploadArea) {
+        uploadArea.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+          uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+          e.preventDefault();
+          uploadArea.classList.remove('dragover');
+          if (e.dataTransfer.files.length > 0 && menuManager) {
+            menuManager.handleImageSelect({ target: { files: e.dataTransfer.files } });
+          }
+        });
+      }
+    });
+
+    // === 通用功能 ===
+    function showNotification(message, type = 'success') {
+      // 取得或建立通知容器
+      let container = document.getElementById('notification-container');
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'notification-container';
+        container.className = 'notification-container';
+        document.body.appendChild(container);
+      }
+
+      const notif = document.createElement('div');
+      notif.className = 'notification';
+      if (type === 'error') {
+        notif.style.background = '#f8d7da';
+        notif.style.color = '#721c24';
+        notif.style.borderLeft = '4px solid #dc3545';
+      } else {
+        notif.style.borderLeft = '4px solid #28a745';
+      }
+      notif.textContent = message;
+      container.appendChild(notif);
+
+      // 淡出並移除
+      setTimeout(() => {
+        notif.classList.add('fade-out');
+        setTimeout(() => notif.remove(), 300);
+      }, 3000);
+    }
+
+    function showDetailModal(title, content) {
+      document.getElementById('detail-modal-title').textContent = title;
+      document.getElementById('detail-modal-content').textContent = content;
+      document.getElementById('detail-modal').style.display = 'flex';
+    }
+
+    function hideDetailModal() {
+      document.getElementById('detail-modal').style.display = 'none';
+    }
+
+    function closeDetailModal(event) {
+      if (event.target.id === 'detail-modal') {
+        hideDetailModal();
+      }
+    }
+
+    function showConfirm(message, title = '確認') {
+      return new Promise((resolve) => {
+        document.getElementById('confirm-modal-title').textContent = title;
+        document.getElementById('confirm-modal-message').textContent = message;
+        document.getElementById('confirm-modal').style.display = 'flex';
+
+        const okBtn = document.getElementById('confirm-modal-ok');
+        const cancelBtn = document.getElementById('confirm-modal-cancel');
+
+        const cleanup = () => {
+          document.getElementById('confirm-modal').style.display = 'none';
+          okBtn.replaceWith(okBtn.cloneNode(true));
+          cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+        };
+
+        document.getElementById('confirm-modal-ok').onclick = () => {
+          cleanup();
+          resolve(true);
+        };
+        document.getElementById('confirm-modal-cancel').onclick = () => {
+          cleanup();
+          resolve(false);
+        };
+      });
+    }
+
+    // Socket.IO 事件
+    socket.on('connect', () => {
+      // 加入廣播房間以接收即時更新
+      socket.emit('join_board', { group_id: 'all' });
+      // 如果已登入，加入超管房間
+      if (adminToken) {
+        socket.emit('join_admin');
+      }
+    });
+
+    socket.on('application_update', (data) => {
+      // 只有已登入時才重新載入申請列表
+      if (adminToken) {
+        loadApplications();
+      }
+      const action = data.action || 'update';
+      if (action === 'new') {
+        showNotification(`新的群組申請：${data.application?.group_name || '未知'}`);
+      }
+    });
+
+    socket.on('group_update', (data) => {
+      // 群組資訊更新（如成員變化），重新載入群組列表
+      if (adminToken) {
+        loadGroupsList();
+        loadGroups();  // 也更新下拉選單
+      }
+    });
+
+    socket.on('order_update', (data) => {
+      if (selectedGroupId) {
+        loadGroupOrders();
+      }
+      const action = data.action || 'update';
+      let message = `${data.display_name || data.user || '有人'} 更新了訂單`;
+      if (action === 'created') {
+        message = `${data.display_name || '有人'} 新增了訂單`;
+      } else if (action === 'cancelled') {
+        message = `${data.display_name || '有人'} 取消了訂單`;
+      } else if (action === 'cleared') {
+        message = '訂單已清除';
+      }
+      if (data.proxy) {
+        message += ' (代理)';
+      }
+      showNotification(message);
+    });
+
+    socket.on('session_status', (data) => {
+      if (selectedGroupId) {
+        loadGroupOrders();
+      }
+      const status = data.status;
+      if (status === 'ordering') {
+        showNotification('群組開始點餐');
+      } else if (status === 'ended') {
+        showNotification('群組點餐已結束');
+      }
+    });
+
+    socket.on('payment_update', (data) => {
+      if (selectedGroupId) {
+        loadGroupOrders();
+      }
+      const status = data.payment_status;
+      if (status === 'paid') {
+        showNotification('訂單已標記付款');
+      } else if (status === 'refunded') {
+        showNotification('訂單已退款');
+      }
+    });
+
+    socket.on('store_change', (data) => {
+      const action = data.action || 'today_stores';
+      if (action === 'store_created' || action === 'store_updated' || action === 'store_deleted') {
+        // 店家列表變更，重新載入
+        loadAllStores();
+        const actionText = action === 'store_created' ? '新增' : action === 'store_updated' ? '更新' : '刪除';
+        showNotification(`店家「${data.store_name}」已${actionText}`);
+      } else {
+        // 今日店家變更
+        updateTodayStoreInfo();
+        showNotification('今日店家已更新');
+      }
+    });
+
+    // 拖放支援
+    const uploadArea = document.getElementById('upload-area');
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+    });
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('dragover');
+    });
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type.startsWith('image/')) {
+        document.getElementById('menu-image-input').files = e.dataTransfer.files;
+        handleImageSelect({ target: { files: e.dataTransfer.files } });
+      }
+    });
+
+    // === 系統維護 ===
+    async function loadMaintenanceStats() {
+      const content = document.getElementById('maintenance-content');
+      try {
+        const res = await authFetch('/api/admin/maintenance/chat-stats');
+        const stats = await res.json();
+
+        let oldestDate = '無';
+        if (stats.oldest_message_date) {
+          oldestDate = new Date(stats.oldest_message_date).toLocaleDateString('zh-TW');
+        }
+
+        content.innerHTML = `
+          <div class="maintenance-stats">
+            <div class="maintenance-stat-row">
+              <span>對話訊息總數</span>
+              <span class="maintenance-stat-value">${stats.total_messages.toLocaleString()}</span>
+            </div>
+            <div class="maintenance-stat-row">
+              <span>超過一年</span>
+              <span class="maintenance-stat-value ${stats.messages_older_than_1_year > 0 ? 'warning' : ''}">${stats.messages_older_than_1_year.toLocaleString()}</span>
+            </div>
+            <div class="maintenance-stat-row">
+              <span>最舊訊息</span>
+              <span class="maintenance-stat-value">${oldestDate}</span>
+            </div>
+          </div>
+          ${stats.messages_older_than_1_year > 0 ? `
+            <button class="btn btn-sm btn-warning" onclick="cleanupChatMessages()" style="margin-top: 10px; width: 100%;">
+              🧹 清理舊訊息 (${stats.messages_older_than_1_year} 筆)
+            </button>
+          ` : `
+            <div class="maintenance-info" style="margin-top: 10px; font-size: 12px; color: #666;">
+              ✅ 系統會自動每月清理超過一年的訊息
+            </div>
+          `}
+        `;
+      } catch (err) {
+        console.error('載入維護統計失敗:', err);
+        content.innerHTML = '<div class="orders-empty">載入失敗</div>';
+      }
+    }
+
+    async function cleanupChatMessages() {
+      if (!await showConfirm('確定要清理超過一年的對話記錄嗎？此操作無法復原。')) {
+        return;
+      }
+
+      try {
+        const res = await authFetch('/api/admin/maintenance/cleanup-chat?retention_days=365', {
+          method: 'POST'
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          showNotification(`已清理 ${data.deleted_count} 筆舊訊息`);
+          loadMaintenanceStats();
+        } else {
+          showNotification('清理失敗');
+        }
+      } catch (err) {
+        console.error('清理失敗:', err);
+        showNotification('清理失敗');
+      }
+    }
+
+    // === LINE Bot 狀態檢查 ===
+    const LINEBOT_CHECK_INTERVAL = 60000; // 60 秒
+    let linebotCheckTimer = null;
+
+    async function checkLineBotStatus() {
+      const statusEl = document.getElementById('linebot-status');
+      if (!statusEl) return;
+
+      const iconEl = statusEl.querySelector('.linebot-status-icon');
+      const textEl = statusEl.querySelector('.linebot-status-text');
+
+      // 顯示檢查中狀態
+      statusEl.className = 'linebot-status checking';
+      iconEl.textContent = '🔄';
+      textEl.textContent = '檢查中...';
+
+      try {
+        const res = await apiFetch('/api/public/linebot-status');
+        const data = await res.json();
+
+        if (data.status === 'online') {
+          statusEl.className = 'linebot-status online';
+          iconEl.textContent = '🟢';
+          textEl.textContent = data.message;
+        } else {
+          statusEl.className = 'linebot-status offline';
+          iconEl.textContent = '🔴';
+          textEl.textContent = data.message;
+        }
+      } catch (err) {
+        console.error('LINE Bot 狀態檢查失敗:', err);
+        statusEl.className = 'linebot-status offline';
+        iconEl.textContent = '🔴';
+        textEl.textContent = 'LINE Bot 離線';
+      }
+    }
+
+    function startLineBotCheck() {
+      checkLineBotStatus();
+      linebotCheckTimer = setInterval(checkLineBotStatus, LINEBOT_CHECK_INTERVAL);
+    }
+  </script>
+</body>
+</html>

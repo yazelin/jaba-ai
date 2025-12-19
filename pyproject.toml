@@ -1,0 +1,41 @@
+[project]
+name = "jaba-ai"
+version = "1.0.0"
+description = "LINE 群組點餐系統 - 整合看板、管理後台、AI 對話"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Web 框架
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.12",
+    "jinja2>=3.1.0",
+    # 資料庫
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "greenlet>=3.1.0",
+    # LINE Bot
+    "line-bot-sdk>=3.0.0",
+    # Socket.IO
+    "python-socketio>=5.11.0",
+    # 圖片處理
+    "pillow>=11.0.0",
+    # 工具
+    "python-dotenv>=1.0.0",
+    "httpx>=0.28.0",
+    "apscheduler>=3.11.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

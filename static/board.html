@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>呷爸 - 今日訂餐看板</title>
+  <link rel="icon" type="image/png" href="images/jaba-sm.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body>
+  <div class="container board-container">
+    <div class="board board-wide">
+      <!-- 中上：標題 -->
+      <div class="board-header">
+        <h1 class="board-title"><img src="images/jaba-sm.png" alt="呷爸" class="logo-icon"> 呷爸訂餐看板</h1>
+        <p class="board-subtitle" id="today-date"></p>
+        <!-- 群組選擇器 -->
+        <div class="group-filter">
+          <select id="group-filter-select" onchange="onGroupFilterChange()">
+            <option value="">所有群組</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 左右兩欄 -->
+      <div class="board-columns">
+        <!-- 左欄：店家 + 聊天 + QRCode -->
+        <div class="board-left">
+          <div class="store-name" id="store-name">
+            <span class="no-store">尚未設定今日店家</span>
+          </div>
+
+          <!-- 美食評論區（唯讀） -->
+          <div class="orders-section">
+            <h2 class="section-title">💬 美食評論區</h2>
+            <div class="chat-readonly" id="chat-readonly">
+              <div class="empty-state">
+                <p>尚無聊天訊息</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- LINE 好友 QRCode -->
+          <div class="qrcode-section">
+            <img src="images/588voelu.png" alt="加入呷爸好友" class="qrcode-image">
+            <div class="qrcode-info">
+              <p class="qrcode-title">加入呷爸好友</p>
+              <p class="qrcode-hint">掃碼加入 LINE 群組點餐</p>
+              <p class="linebot-status" id="linebot-status">
+                <span class="linebot-status-icon">🔄</span>
+                <span class="linebot-status-text">LINE Bot 檢查中...</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右欄：訂單 + 統計 + 按鈕 -->
+        <div class="board-right">
+          <div class="orders-section">
+            <h2 class="section-title">📋 訂單列表</h2>
+            <div class="orders-list" id="orders-list">
+              <div class="empty-state">
+                <div class="empty-state-icon">🍽️</div>
+                <p>還沒有人訂餐</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="orders-section">
+            <h2 class="section-title">📊 品項統計</h2>
+            <div class="item-summary" id="item-summary">
+              <div class="empty-state">
+                <p>尚無統計資料</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="grand-total" id="grand-total">
+            <div class="grand-total-label">總金額</div>
+            <div class="grand-total-amount">$0</div>
+          </div>
+
+          <div class="buttons">
+            <button class="btn btn-primary" onclick="showApplicationModal()">📝 申請開通</button>
+            <a href="line-admin.html" class="btn btn-secondary">📱 LINE 管理</a>
+            <a href="admin.html" class="btn btn-secondary">⚙️ 超級管理員</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 申請開通 Modal -->
+  <div class="modal-overlay" id="application-modal" style="display: none;">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3>📝 申請開通群組</h3>
+        <button class="modal-close" onclick="hideApplicationModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- 申請表單 -->
+        <div id="application-form-section">
+          <div class="form-group">
+            <label>LINE 群組 ID *</label>
+            <input type="text" id="app-line-group-id" placeholder="例：Cab1234567890">
+            <small style="color: #666;">在群組中輸入「id」，Bot 會回覆群組 ID</small>
+          </div>
+          <div class="form-group">
+            <label>群組名稱 *</label>
+            <input type="text" id="app-group-name" placeholder="例：ABC公司午餐團">
+          </div>
+          <div class="form-group">
+            <label>聯絡資訊 *</label>
+            <input type="text" id="app-contact-info" placeholder="例：小明 0912-345-678">
+          </div>
+          <div class="form-group">
+            <label>群組代碼 *</label>
+            <input type="text" id="app-group-code" placeholder="設定一組方便記憶的代碼（4-20字元）">
+            <div class="form-hint">
+              用途說明：<br>
+              • 登入 LINE 管理後台<br>
+              • 在群組中輸入「管理員 [代碼]」啟用管理員身份<br>
+              <span style="color: #999; font-size: 0.9em;">此代碼會在群組對話中顯示，不具保密性，可視為群組識別碼。</span>
+            </div>
+          </div>
+          <div style="margin-top: 15px;">
+            <button class="btn btn-primary" onclick="submitApplication()" style="width: 100%;">提交申請</button>
+          </div>
+        </div>
+
+        <!-- 查詢狀態 -->
+        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+          <h4 style="margin-bottom: 10px;">查詢申請狀態</h4>
+          <div class="form-group" style="margin-bottom: 0;">
+            <div style="display: flex; gap: 10px;">
+              <input type="text" id="query-group-code" placeholder="輸入群組代碼" style="flex: 1;">
+              <button class="btn btn-secondary" onclick="queryApplicationStatus()">查詢</button>
+            </div>
+          </div>
+          <div id="application-status-result" style="margin-top: 10px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 自動偵測 base path（支援 nginx 反向代理）
+    const basePath = window.location.pathname.includes('/jaba-ai/') ? '/jaba-ai' : '';
+
+    function apiFetch(url, options = {}) {
+      return fetch(basePath + url, options);
+    }
+
+    // Socket.IO 連線
+    const socket = io({
+      path: basePath + '/socket.io/'
+    });
+    let selectedGroupId = null;
+
+    // === 瀏覽器通知 ===
+    function requestNotificationPermission() {
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+    }
+
+    function sendBrowserNotification(title, body, tag = null) {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        const options = {
+          body: body,
+          icon: 'images/jaba-sm.png',
+          tag: tag || `jaba-${Date.now()}`,
+          requireInteraction: false
+        };
+
+        const notification = new Notification(title, options);
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+        };
+      }
+    }
+
+    requestNotificationPermission();
+
+    // 顯示今日日期
+    const today = new Date();
+    document.getElementById('today-date').textContent =
+      `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()} 星期${['日','一','二','三','四','五','六'][today.getDay()]}`;
+
+    // 載入群組列表
+    async function loadGroups() {
+      try {
+        const res = await apiFetch('/api/board/groups');
+        const groups = await res.json();
+        const select = document.getElementById('group-filter-select');
+
+        let html = '<option value="">所有群組</option>';
+        groups.forEach(group => {
+          html += `<option value="${group.id}">${group.name || '未命名群組'}</option>`;
+        });
+        select.innerHTML = html;
+      } catch (err) {
+        console.error('載入群組失敗:', err);
+      }
+    }
+
+    function onGroupFilterChange() {
+      selectedGroupId = document.getElementById('group-filter-select').value || null;
+      loadBoardData();
+    }
+
+    // 載入今日店家
+    async function loadTodayStores() {
+      try {
+        const url = selectedGroupId
+          ? `/api/board/today-stores?group_id=${selectedGroupId}`
+          : '/api/board/today-stores';
+        const res = await fetch(url);
+        const data = await res.json();
+        updateStoreDisplay(data);
+      } catch (err) {
+        console.error('載入店家失敗:', err);
+      }
+    }
+
+    // 更新店家顯示
+    function updateStoreDisplay(data) {
+      const storeNameEl = document.getElementById('store-name');
+
+      // 彙整所有店家
+      const allStores = [];
+      data.forEach(groupData => {
+        groupData.stores.forEach(store => {
+          if (!allStores.find(s => s.store_id === store.store_id)) {
+            allStores.push(store);
+          }
+        });
+      });
+
+      if (allStores.length > 0) {
+        let storeHtml = '';
+        allStores.forEach((store, index) => {
+          if (index > 0) storeHtml += '<div class="store-divider-board"></div>';
+          storeHtml += `<div class="store-name-item">🏪 ${store.store_name || '未知店家'}</div>`;
+        });
+        storeNameEl.innerHTML = storeHtml;
+      } else {
+        storeNameEl.innerHTML = '<span class="no-store">尚未設定今日店家</span>';
+      }
+    }
+
+    // 載入訂單
+    async function loadOrders() {
+      try {
+        const url = selectedGroupId
+          ? `/api/board/orders?group_id=${selectedGroupId}`
+          : '/api/board/orders';
+        const res = await fetch(url);
+        const data = await res.json();
+        updateOrdersDisplay(data);
+      } catch (err) {
+        console.error('載入訂單失敗:', err);
+      }
+    }
+
+    // 更新訂單顯示
+    function updateOrdersDisplay(data) {
+      const ordersListEl = document.getElementById('orders-list');
+      const itemSummaryEl = document.getElementById('item-summary');
+
+      // 品項統計
+      const itemCounts = {};
+      let grandTotal = 0;
+
+      if (data && data.length > 0) {
+        let html = '';
+        data.forEach((sessionData, index) => {
+          if (index > 0) html += '<div class="orders-group-divider"></div>';
+
+          const statusIcon = sessionData.session_status === 'ordering' ? '🟢' : '⚪';
+          html += `<div class="orders-group-header">${statusIcon} ${sessionData.group_name}</div>`;
+
+          sessionData.orders.forEach(order => {
+            grandTotal += order.total;
+
+            const itemsText = order.items.map(item => {
+              // 統計品項
+              const key = item.note ? `${item.name}（${item.note}）` : item.name;
+              itemCounts[key] = (itemCounts[key] || 0) + item.quantity;
+
+              return `${item.name} x${item.quantity}${item.note ? ` (${item.note})` : ''}`;
+            }).join('、');
+
+            html += `
+              <div class="order-card">
+                <div>
+                  <div class="order-user">${order.display_name || '匿名'}</div>
+                  <div class="order-items">${itemsText}</div>
+                </div>
+                <div class="order-total">$${order.total}</div>
+              </div>
+            `;
+          });
+        });
+        ordersListEl.innerHTML = html;
+      } else {
+        ordersListEl.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">🍽️</div>
+            <p>還沒有人訂餐</p>
+          </div>
+        `;
+      }
+
+      // 更新品項統計
+      const itemEntries = Object.entries(itemCounts);
+      if (itemEntries.length > 0) {
+        itemSummaryEl.innerHTML = itemEntries
+          .sort((a, b) => b[1] - a[1])
+          .map(([name, count]) => `<span class="item-badge">${name} x${count}</span>`)
+          .join('');
+      } else {
+        itemSummaryEl.innerHTML = '<div class="empty-state"><p>尚無統計資料</p></div>';
+      }
+
+      // 更新總金額
+      document.querySelector('.grand-total-amount').textContent = `$${grandTotal}`;
+    }
+
+    // 載入聊天訊息
+    async function loadChat() {
+      try {
+        const url = selectedGroupId
+          ? `/api/board/chat?group_id=${selectedGroupId}`
+          : '/api/board/chat';
+        const res = await fetch(url);
+        const messages = await res.json();
+        updateChatDisplay(messages);
+      } catch (err) {
+        console.error('載入聊天失敗:', err);
+      }
+    }
+
+    function updateChatDisplay(messages) {
+      const chatEl = document.getElementById('chat-readonly');
+
+      if (!messages || messages.length === 0) {
+        chatEl.innerHTML = '<div class="empty-state"><p>尚無聊天訊息</p></div>';
+        return;
+      }
+
+      // 只顯示最近 15 則訊息
+      const recentMessages = messages.slice(-15);
+
+      chatEl.innerHTML = recentMessages.map(msg => {
+        const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('zh-TW', {
+          hour: '2-digit',
+          minute: '2-digit'
+        }) : '';
+        const isJaba = msg.role === 'assistant' || msg.display_name === '呷爸';
+        const jabaClass = isJaba ? ' jaba' : '';
+        const groupPrefix = msg.group_id ? `<span class="chat-group-name">[${msg.display_name}]</span> ` : '';
+        const content = (msg.content || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `
+          <div class="chat-readonly-message${jabaClass}">
+            ${groupPrefix}<span class="chat-readonly-user">${msg.display_name}</span>
+            <span class="chat-readonly-content">${content}</span>
+            <span class="chat-readonly-time">${time}</span>
+          </div>
+        `;
+      }).join('');
+
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    // 載入所有資料
+    function loadBoardData() {
+      loadTodayStores();
+      loadOrders();
+      loadChat();
+    }
+
+    // 顯示通知 - 支援堆疊顯示
+    function showNotification(message, type = 'success') {
+      // 取得或建立通知容器
+      let container = document.getElementById('notification-container');
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'notification-container';
+        container.className = 'notification-container';
+        document.body.appendChild(container);
+      }
+
+      const notif = document.createElement('div');
+      notif.className = 'notification';
+      if (type === 'error') {
+        notif.style.background = '#f8d7da';
+        notif.style.color = '#721c24';
+        notif.style.borderLeft = '4px solid #dc3545';
+      } else {
+        notif.style.borderLeft = '4px solid #28a745';
+      }
+      notif.textContent = message;
+      container.appendChild(notif);
+
+      // 淡出並移除
+      setTimeout(() => {
+        notif.classList.add('fade-out');
+        setTimeout(() => notif.remove(), 300);
+      }, 3000);
+    }
+
+    // Socket.IO 事件
+    socket.on('connect', () => {
+      socket.emit('join_board', { group_id: selectedGroupId || 'all' });
+    });
+
+    socket.on('order_update', (data) => {
+      const action = data.action || 'update';
+      let message = `${data.display_name || data.user || '有人'} 更新了訂單！`;
+      if (action === 'created') {
+        message = `${data.display_name || '有人'} 新增了訂單！`;
+      } else if (action === 'cancelled') {
+        message = `${data.display_name || '有人'} 取消了訂單`;
+      } else if (action === 'cleared') {
+        message = '訂單已清除';
+      }
+      showNotification(message);
+      sendBrowserNotification('訂單更新', message);
+      loadOrders();
+    });
+
+    socket.on('chat_message', (data) => {
+      loadChat();
+    });
+
+    socket.on('session_status', (data) => {
+      const status = data.status;
+      if (status === 'ordering') {
+        showNotification('開始點餐了！');
+        sendBrowserNotification('點餐開始', '群組已開始點餐');
+      } else if (status === 'ended') {
+        showNotification('點餐已結束');
+        sendBrowserNotification('點餐結束', '群組點餐已結束');
+      }
+      loadOrders();
+    });
+
+    socket.on('payment_update', (data) => {
+      const status = data.payment_status;
+      if (status === 'paid') {
+        showNotification('有訂單已付款');
+      } else if (status === 'refunded') {
+        showNotification('有訂單已退款');
+      }
+      loadOrders();
+    });
+
+    socket.on('store_change', (data) => {
+      showNotification('今日店家已更新');
+      loadTodayStores();
+    });
+
+    // 健康檢查 / LINE Bot 狀態
+    async function checkLineBotStatus() {
+      const statusEl = document.getElementById('linebot-status');
+      const iconEl = statusEl.querySelector('.linebot-status-icon');
+      const textEl = statusEl.querySelector('.linebot-status-text');
+
+      try {
+        const res = await fetch('/health');
+        const data = await res.json();
+
+        if (data.status === 'healthy') {
+          statusEl.className = 'linebot-status online';
+          iconEl.textContent = '🟢';
+          textEl.textContent = '系統運作中';
+        } else {
+          statusEl.className = 'linebot-status offline';
+          iconEl.textContent = '🔴';
+          textEl.textContent = '系統異常';
+        }
+      } catch (err) {
+        statusEl.className = 'linebot-status offline';
+        iconEl.textContent = '🔴';
+        textEl.textContent = '無法連線';
+      }
+    }
+
+    // 初始化
+    loadGroups();
+    loadBoardData();
+    checkLineBotStatus();
+
+    // 定期刷新
+    setInterval(loadBoardData, 30000);
+    setInterval(checkLineBotStatus, 60000);
+
+    // === 申請開通功能 ===
+    function showApplicationModal() {
+      document.getElementById('application-modal').style.display = 'flex';
+    }
+
+    function hideApplicationModal() {
+      document.getElementById('application-modal').style.display = 'none';
+    }
+
+    async function submitApplication() {
+      const lineGroupId = document.getElementById('app-line-group-id').value.trim();
+      const groupName = document.getElementById('app-group-name').value.trim();
+      const contactInfo = document.getElementById('app-contact-info').value.trim();
+      const groupCode = document.getElementById('app-group-code').value.trim();
+
+      if (!lineGroupId || !groupName || !contactInfo || !groupCode) {
+        showNotification('請填寫所有必填欄位', 'error');
+        return;
+      }
+
+      if (groupCode.length < 4 || groupCode.length > 20) {
+        showNotification('群組代碼長度需為 4-20 字元', 'error');
+        return;
+      }
+
+      try {
+        const res = await apiFetch('/api/line-admin/applications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            line_group_id: lineGroupId,
+            group_name: groupName,
+            contact_info: contactInfo,
+            group_code: groupCode,
+          }),
+        });
+
+        if (res.ok) {
+          showNotification('申請已提交！請等待管理員審核。');
+          document.getElementById('app-line-group-id').value = '';
+          document.getElementById('app-group-name').value = '';
+          document.getElementById('app-contact-info').value = '';
+          document.getElementById('app-group-code').value = '';
+          hideApplicationModal();
+        } else {
+          const data = await res.json();
+          showNotification(data.detail || '申請失敗', 'error');
+        }
+      } catch (err) {
+        console.error('提交申請失敗:', err);
+        showNotification('提交失敗，請稍後再試', 'error');
+      }
+    }
+
+    async function queryApplicationStatus() {
+      const groupCode = document.getElementById('query-group-code').value.trim();
+      const resultEl = document.getElementById('application-status-result');
+
+      if (!groupCode) {
+        showNotification('請輸入群組代碼', 'error');
+        return;
+      }
+
+      try {
+        const res = await apiFetch(`/api/line-admin/applications/by-code/${encodeURIComponent(groupCode)}`);
+        const applications = await res.json();
+
+        if (!applications || applications.length === 0) {
+          resultEl.innerHTML = '<div style="color: #666;">查無申請記錄</div>';
+          return;
+        }
+
+        const statusMap = {
+          pending: '<span style="color: #ffc107;">⏳ 審核中</span>',
+          approved: '<span style="color: #28a745;">✅ 已通過</span>',
+          rejected: '<span style="color: #dc3545;">❌ 已拒絕</span>',
+        };
+
+        resultEl.innerHTML = applications.map(app => `
+          <div style="padding: 10px; background: #f5f5f5; border-radius: 4px; margin-bottom: 10px;">
+            <div><strong>${app.group_name}</strong> ${statusMap[app.status] || app.status}</div>
+            <div style="font-size: 0.9em; color: #666;">申請時間：${new Date(app.created_at).toLocaleString()}</div>
+            ${app.review_note ? `<div style="font-size: 0.9em; color: #999;">備註：${app.review_note}</div>` : ''}
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error('查詢失敗:', err);
+        resultEl.innerHTML = '<div style="color: #dc3545;">查詢失敗</div>';
+      }
+    }
+
+    // 點擊 Modal 外部關閉
+    document.getElementById('application-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'application-modal') {
+        hideApplicationModal();
+      }
+    });
+  </script>
+</body>
+</html>

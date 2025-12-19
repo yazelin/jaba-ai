@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: jaba-ai-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-jaba_ai}
+      POSTGRES_USER: ${DB_USER:-jaba_ai}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-jaba_ai_secret}
+    volumes:
+      - jaba_ai_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-jaba_ai} -d ${DB_NAME:-jaba_ai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  jaba_ai_postgres_data:

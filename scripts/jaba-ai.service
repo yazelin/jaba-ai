@@ -1,0 +1,37 @@
+[Unit]
+Description=Jaba AI LINE Bot Service
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ct
+Group=ct
+WorkingDirectory=/home/ct/SDD/jaba-ai
+EnvironmentFile=/home/ct/SDD/jaba-ai/.env
+
+# 確保 PATH 包含 uv 和其他工具
+Environment="PATH=/home/ct/.local/bin:/home/ct/.nvm/versions/node/v24.11.1/bin:/usr/local/bin:/usr/bin:/bin"
+
+# 啟動前確保資料庫容器運行
+ExecStartPre=/usr/bin/docker compose up -d postgres
+ExecStartPre=/bin/sleep 3
+
+# 啟動應用程式
+# 注意：main.py 中設定了 reload=True，會自動監聽檔案變化並重載
+# 生產環境如需關閉此功能，請修改 main.py 的 uvicorn.run() 設定
+ExecStart=/home/ct/.local/bin/uv run python main.py
+
+# 停止時關閉資料庫容器
+ExecStopPost=/usr/bin/docker compose down
+
+Restart=on-failure
+RestartSec=10
+
+# 日誌設定
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jaba-ai
+
+[Install]
+WantedBy=multi-user.target
