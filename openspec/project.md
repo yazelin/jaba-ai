@@ -18,16 +18,19 @@
 
 ## Tech Stack
 - **語言**: Python 3.12+
-- **Web 框架**: FastAPI
-- **即時通訊**: Socket.IO
-- **AI**: Claude Code (CLI)
-- **LINE SDK**: line-bot-sdk >= 3.0.0
+- **套件管理**: uv
+- **Web 框架**: FastAPI >= 0.115.0
 - **ASGI 伺服器**: Uvicorn
-- **資料庫**: PostgreSQL + asyncpg (Docker)
-- **資料庫遷移**: Alembic
+- **資料庫**: PostgreSQL 16 (Docker)
 - **ORM**: SQLAlchemy 2.0 (async)
-- **反向代理**: nginx (Docker)
-- **部署**: 內網伺服器
+- **連線驅動**: asyncpg
+- **資料庫遷移**: Alembic
+- **即時通訊**: python-socketio
+- **LINE SDK**: line-bot-sdk v3
+- **AI**: Claude Code (CLI)
+- **HTTP Client**: httpx
+- **排程**: APScheduler
+- **部署**: systemd + Docker Compose
 
 ## Project Conventions
 
@@ -38,10 +41,11 @@
 - PascalCase 類別命名
 
 ### Architecture Patterns
-- **模組化設計**: 功能分離到 `app/` 目錄
-- **事件驅動**: Socket.IO 廣播即時更新
-- **Repository 模式**: 資料存取層抽象化
-- **非同步優先**: async/await 處理 I/O
+- **分層架構**: Routers → Services → Repositories → Models
+- **Repository Pattern**: 資料層與業務邏輯分離，查詢邏輯集中管理
+- **完全非同步**: FastAPI + asyncio + asyncpg，適合 I/O 密集型應用
+- **事件隊列機制**: 先將事件加入隊列，資料庫提交後批次發送，避免競態條件
+- **即時廣播**: Socket.IO 廣播訂單、聊天、點餐狀態、店家變更事件
 
 ### Database Design
 - UUID 作為主鍵
@@ -49,6 +53,11 @@
 - 軟刪除使用 deleted_at
 - JSONB 儲存彈性結構資料
 - 群組為核心組織單位
+
+### Security
+- **Prompt Injection 防護**: `sanitize_user_input()` 過濾惡意輸入
+- **LINE 簽章驗證**: Webhook 驗證 X-Line-Signature
+- **安全日誌**: 記錄可疑輸入到 `security_logs` 表
 
 ## Domain Context
 

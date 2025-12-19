@@ -223,14 +223,14 @@ class OrderRepository(BaseRepository[Order]):
 
     async def calculate_total(self, order: Order) -> Order:
         """計算訂單總金額"""
-        # 重新載入訂單和品項，避免 lazy loading 問題
+        # 直接從資料庫計算品項總額，避免 SQLAlchemy identity map 快取問題
+        # 這確保新增的品項會被正確計入總金額
         result = await self.session.execute(
-            select(Order)
-            .where(Order.id == order.id)
-            .options(selectinload(Order.items))
+            select(func.coalesce(func.sum(OrderItem.subtotal), 0))
+            .where(OrderItem.order_id == order.id)
         )
-        order = result.scalar_one()
-        order.total_amount = sum(item.subtotal for item in order.items)
+        total = result.scalar()
+        order.total_amount = total
         return await self.update(order)
 
 

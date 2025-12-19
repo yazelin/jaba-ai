@@ -354,6 +354,67 @@ Authorization: Bearer <token>
 
 ---
 
+### AI 日誌
+
+#### GET /api/admin/ai-logs
+取得 AI 對話日誌。
+
+**Query Parameters:**
+- `limit` (optional): 筆數限制（預設 100）
+- `offset` (optional): 偏移量（預設 0）
+
+**Response:**
+```json
+[
+  {
+    "id": "uuid",
+    "user_id": "uuid",
+    "group_id": "uuid",
+    "model": "haiku",
+    "input_prompt": "...",
+    "raw_response": "...",
+    "parsed_message": "AI 回應的訊息",
+    "parsed_actions": [],
+    "success": true,
+    "duration_ms": 1234,
+    "created_at": "2024-01-01T12:00:00Z"
+  }
+]
+```
+
+---
+
+### AI 聊天（超管後台）
+
+#### POST /api/chat
+與 AI 助手對話（需認證）。
+
+**Request:**
+```json
+{
+  "message": "今天吃什麼",
+  "username": "admin",
+  "is_manager": true,
+  "group_id": "uuid",
+  "history": [
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "content": "..."}
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "message": "AI 回應訊息",
+  "actions": [
+    {"type": "set_today_store", "data": {"store_id": "...", "group_id": "..."}}
+  ]
+}
+```
+
+---
+
 ## LINE 管理員 API
 
 ### 認證

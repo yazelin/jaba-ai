@@ -217,7 +217,7 @@
         const url = selectedGroupId
           ? `/api/board/today-stores?group_id=${selectedGroupId}`
           : '/api/board/today-stores';
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const data = await res.json();
         updateStoreDisplay(data);
       } catch (err) {
@@ -257,7 +257,7 @@
         const url = selectedGroupId
           ? `/api/board/orders?group_id=${selectedGroupId}`
           : '/api/board/orders';
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const data = await res.json();
         updateOrdersDisplay(data);
       } catch (err) {
@@ -335,7 +335,7 @@
         const url = selectedGroupId
           ? `/api/board/chat?group_id=${selectedGroupId}`
           : '/api/board/chat';
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const messages = await res.json();
         updateChatDisplay(messages);
       } catch (err) {
@@ -470,7 +470,7 @@
       const textEl = statusEl.querySelector('.linebot-status-text');
 
       try {
-        const res = await fetch('/health');
+        const res = await fetch('health');
         const data = await res.json();
 
         if (data.status === 'healthy') {

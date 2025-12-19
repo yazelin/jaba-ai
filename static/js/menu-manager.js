@@ -266,6 +266,14 @@ class MenuManager {
         body: formData,
       });
 
+      // 檢查 HTTP 狀態碼
+      if (res.status === 403) {
+        throw new Error('此功能僅限內網使用');
+      }
+      if (!res.ok) {
+        throw new Error(`伺服器錯誤 (${res.status})`);
+      }
+
       const data = await res.json();
 
       if (data.error) {

@@ -605,6 +605,15 @@ async def lifespan(app: FastAPI):
 - **三階段工作流程**：`/openspec:proposal`（草擬）→ `/openspec:apply`（實施）→ `/openspec:archive`（歸檔）
 - **優勢**：AI 只需處理隔離的 spec deltas，而非整個程式碼庫，提升 token 效率
 
+### AI 可觀測性 (AI Observability)
+
+- **完整記錄**：每次 AI 對話都記錄完整的輸入 prompt、原始回應、解析結果
+- **Token 追蹤**：記錄輸入/輸出 token 數量（簡易估算），協助分析 prompt 長度和成本
+- **Prompt 調優**：對照輸入輸出和 token 使用量，持續優化 prompt 效果
+- **問題排查**：當 AI 回應異常時，可回溯查看完整 context 和思考過程
+- **成本監控**：記錄使用的模型、執行時間和 token 數量，分析 AI 使用成本
+- **安全審計**：追蹤 AI 執行的動作（如設定今日店家），確保行為符合預期
+
 ### 記憶體快取
 
 - **實現**：使用 Python dict 作為快取

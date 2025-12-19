@@ -35,6 +35,25 @@
 - **安全日誌**：記錄可疑行為供監控
 - **LINE 簽章驗證**：確保 Webhook 請求來源
 
+## 系統截圖
+
+### 訂餐看板
+即時顯示今日店家、美食評論區和訂單統計。
+
+![訂餐看板](demo/01-board-main-dashboard.png)
+
+### LINE 群組管理
+群組管理員可管理店家、上傳菜單（AI 自動辨識）、設定今日店家。
+
+![LINE 群組管理](demo/03-line-admin-dashboard.png)
+
+### 超級管理員後台
+管理所有群組、店家、使用者、AI 提示詞和系統設定。
+
+![超級管理員後台](demo/10-admin-order-management.png)
+
+> 更多截圖請參考 [系統截圖文件](docs/screenshots.md)
+
 ## 技術棧
 
 | 類別 | 技術 | 版本 |
@@ -167,6 +186,7 @@ jaba-ai/
 │   ├── jaba-ai.service       # systemd 服務檔案
 │   ├── install-service.sh    # 安裝服務
 │   └── uninstall-service.sh  # 移除服務
+├── demo/                     # 系統截圖
 ├── docs/                     # 詳細文件
 ├── openspec/                 # OpenSpec (SDD 規格驅動開發)
 │   ├── AGENTS.md             # AI 協作指引
@@ -184,6 +204,7 @@ jaba-ai/
 
 | 文件 | 說明 |
 |-----|------|
+| [系統截圖](docs/screenshots.md) | 各功能模組操作畫面 |
 | [系統架構](docs/architecture.md) | 整體架構、模組說明、安全措施、技術亮點 |
 | [資料庫結構](docs/database.md) | 資料表和欄位詳細說明 |
 | [API 文件](docs/api.md) | RESTful API 和 Socket.IO 事件 |

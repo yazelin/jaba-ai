@@ -60,3 +60,4 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+tmp/

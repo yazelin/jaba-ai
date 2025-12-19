@@ -32,6 +32,14 @@
       color: #333;
       word-break: break-word;
     }
+    /* AI 日誌表格樣式 */
+    .model-tag {
+      background: #e3f2fd;
+      color: #1565c0;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -58,6 +66,7 @@
       <button class="admin-tab" onclick="switchTab('groups')">👥 群組管理</button>
       <button class="admin-tab" onclick="switchTab('users')">👤 使用者</button>
       <button class="admin-tab" onclick="switchTab('security')">🔒 違規記錄</button>
+      <button class="admin-tab" onclick="switchTab('ai-logs')">🤖 AI 日誌</button>
       <button class="admin-tab" onclick="switchTab('settings')">⚙️ 系統設定</button>
     </div>
 
@@ -316,6 +325,55 @@
       </div>
     </div>
 
+    <!-- AI 日誌標籤內容 -->
+    <div class="admin-tab-content" id="tab-ai-logs">
+      <div class="admin-two-columns">
+        <div class="admin-main-panel" style="flex: 1;">
+          <div class="panel-card">
+            <div class="panel-header">
+              <span>🤖</span>
+              <span>AI 對話日誌</span>
+              <button class="btn btn-sm btn-secondary" onclick="loadAiLogs()" style="margin-left: auto;" title="重新整理">🔄</button>
+            </div>
+            <div class="panel-content" style="padding: 0;">
+              <table class="data-table" id="ai-logs-table">
+                <thead>
+                  <tr>
+                    <th style="width: 160px;">時間</th>
+                    <th style="width: 100px;">使用者</th>
+                    <th style="width: 120px;">群組</th>
+                    <th style="width: 60px;">模型</th>
+                    <th>訊息摘要</th>
+                    <th style="width: 80px;">耗時</th>
+                    <th style="width: 70px;">輸入</th>
+                    <th style="width: 70px;">輸出</th>
+                    <th style="width: 60px;">狀態</th>
+                  </tr>
+                </thead>
+                <tbody id="ai-logs-tbody">
+                  <tr><td colspan="9" class="orders-empty">載入中...</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pagination" id="ai-logs-pagination"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Log 詳情彈窗 -->
+    <div class="modal-overlay" id="ai-log-detail-modal" style="display: none;">
+      <div class="modal-content" style="max-width: 900px; max-height: 90vh;">
+        <div class="modal-header">
+          <h3>🤖 AI 對話詳情</h3>
+          <button class="modal-close" onclick="closeAiLogDetailModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="ai-log-detail-content" style="overflow-y: auto; max-height: calc(90vh - 120px);">
+          <!-- 動態填入 -->
+        </div>
+      </div>
+    </div>
+
     <!-- 系統設定標籤內容 -->
     <div class="admin-tab-content" id="tab-settings">
       <div class="admin-two-columns">
@@ -566,6 +624,8 @@
         loadGroupsList();
       } else if (tabName === 'security') {
         loadSecurityLogs();
+      } else if (tabName === 'ai-logs') {
+        loadAiLogs();
       }
     }
 
@@ -648,7 +708,7 @@
       const loadingId = addChatWidgetMessage('assistant', '處理中...');
 
       try {
-        const res = await apiFetch('/api/chat', {
+        const res = await authFetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1031,6 +1091,148 @@
       showDetailModal('📝 原始訊息', message);
     }
 
+    // === AI 日誌 ===
+    let aiLogsPage = { offset: 0, limit: 20 };
+
+    async function loadAiLogs() {
+      try {
+        const res = await authFetch(`/api/admin/ai-logs?limit=${aiLogsPage.limit}&offset=${aiLogsPage.offset}`);
+        const data = await res.json();
+
+        const tbody = document.getElementById('ai-logs-tbody');
+        if (data.logs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="orders-empty">沒有 AI 日誌</td></tr>';
+        } else {
+          tbody.innerHTML = data.logs.map(log => `
+            <tr style="cursor: pointer;" onclick="viewAiLogDetail('${log.id}')">
+              <td style="font-size: 0.85em;">${formatDateTime(log.created_at)}</td>
+              <td>${escapeHtml(log.user_name || '-')}</td>
+              <td>${escapeHtml(log.group_name || '個人')}</td>
+              <td><span class="model-tag">${log.model}</span></td>
+              <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                ${escapeHtml(log.parsed_message || '-')}
+              </td>
+              <td>${log.duration_ms ? log.duration_ms + ' ms' : '-'}</td>
+              <td>${log.input_tokens || 0}</td>
+              <td>${log.output_tokens || 0}</td>
+              <td>
+                <span class="status-badge ${log.success ? 'active' : 'inactive'}">
+                  ${log.success ? '✓' : '✗'}
+                </span>
+              </td>
+            </tr>
+          `).join('');
+        }
+
+        renderPagination('ai-logs-pagination', data.total, aiLogsPage, loadAiLogs);
+      } catch (err) {
+        console.error('載入 AI 日誌失敗:', err);
+      }
+    }
+
+    async function viewAiLogDetail(logId) {
+      try {
+        const res = await authFetch(`/api/admin/ai-logs/${logId}`);
+        const log = await res.json();
+
+        const content = document.getElementById('ai-log-detail-content');
+        content.innerHTML = `
+          <div class="ai-log-detail">
+            <div class="detail-section">
+              <div class="detail-row">
+                <span class="detail-label">時間</span>
+                <span class="detail-value">${formatDateTime(log.created_at)}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">使用者</span>
+                <span class="detail-value">${escapeHtml(log.user_name || '-')}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">群組</span>
+                <span class="detail-value">${escapeHtml(log.group_name || '個人對話')}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">模型</span>
+                <span class="detail-value"><span class="model-tag">${log.model}</span></span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">耗時</span>
+                <span class="detail-value">${log.duration_ms ? log.duration_ms + ' ms' : '-'}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Token（估算）</span>
+                <span class="detail-value">輸入: ${log.input_tokens || 0} / 輸出: ${log.output_tokens || 0}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">狀態</span>
+                <span class="detail-value">
+                  <span class="status-badge ${log.success ? 'active' : 'inactive'}">
+                    ${log.success ? '成功' : '失敗'}
+                  </span>
+                </span>
+              </div>
+            </div>
+
+            <div class="detail-section">
+              <h4>📥 輸入 Prompt</h4>
+              <pre class="prompt-content">${escapeHtml(log.input_prompt || '')}</pre>
+            </div>
+
+            <div class="detail-section">
+              <h4>📤 AI 原始回應（含思考過程）</h4>
+              <pre class="prompt-content">${escapeHtml(log.raw_response || '')}</pre>
+            </div>
+
+            <div class="detail-section">
+              <h4>💬 解析後訊息</h4>
+              <div class="parsed-message">${escapeHtml(log.parsed_message || '(空)')}</div>
+            </div>
+
+            <div class="detail-section">
+              <h4>⚡ 解析後動作</h4>
+              <pre class="actions-content">${log.parsed_actions ? JSON.stringify(log.parsed_actions, null, 2) : '[]'}</pre>
+            </div>
+          </div>
+
+          <style>
+            .ai-log-detail { }
+            .detail-section { margin-bottom: 20px; }
+            .detail-section h4 { margin: 0 0 10px 0; color: #666; font-size: 14px; }
+            .detail-row { display: flex; padding: 6px 0; border-bottom: 1px solid #eee; }
+            .detail-label { min-width: 80px; color: #888; }
+            .detail-value { color: #333; }
+            .model-tag { background: #e3f2fd; color: #1565c0; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+            .prompt-content, .actions-content {
+              background: #f5f5f5;
+              padding: 12px;
+              border-radius: 6px;
+              font-size: 12px;
+              line-height: 1.5;
+              overflow-x: auto;
+              max-height: 300px;
+              white-space: pre-wrap;
+              word-break: break-word;
+            }
+            .parsed-message {
+              background: #fff8e1;
+              padding: 12px;
+              border-radius: 6px;
+              line-height: 1.6;
+            }
+          </style>
+        `;
+
+        document.getElementById('ai-log-detail-modal').style.display = 'flex';
+      } catch (err) {
+        console.error('載入 AI 日誌詳情失敗:', err);
+        showNotification('載入失敗', 'error');
+      }
+    }
+
+    function closeAiLogDetailModal() {
+      document.getElementById('ai-log-detail-modal').style.display = 'none';
+    }
+
     // === 通用函數 ===
     function formatDateTime(isoString) {
       if (!isoString) return '-';
@@ -1074,6 +1276,10 @@
         securityPage.offset += direction * securityPage.limit;
         if (securityPage.offset < 0) securityPage.offset = 0;
         loadSecurityLogs();
+      } else if (containerId === 'ai-logs-pagination') {
+        aiLogsPage.offset += direction * aiLogsPage.limit;
+        if (aiLogsPage.offset < 0) aiLogsPage.offset = 0;
+        loadAiLogs();
       }
     }
 

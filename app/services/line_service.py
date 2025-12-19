@@ -50,7 +50,8 @@ from app.repositories import (
 from app.services.ai_service import AiService, sanitize_user_input
 from app.services.cache_service import CacheService
 from app.repositories import AiPromptRepository, SecurityLogRepository
-from app.models.system import SecurityLog
+from app.repositories.system_repo import AiLogRepository
+from app.models.system import AiLog, SecurityLog
 
 logger = logging.getLogger("jaba.line")
 
@@ -89,9 +90,35 @@ class LineService:
         self.menu_item_repo = MenuItemRepository(session)
         self.prompt_repo = AiPromptRepository(session)
         self.security_log_repo = SecurityLogRepository(session)
+        self.ai_log_repo = AiLogRepository(session)
 
         # AI 服務
         self.ai_service = AiService()
+
+    async def _record_ai_log(
+        self,
+        ai_response: dict,
+        user_id: Optional[UUID] = None,
+        group_id: Optional[UUID] = None,
+    ) -> None:
+        """記錄 AI 對話日誌"""
+        try:
+            ai_log = AiLog(
+                user_id=user_id,
+                group_id=group_id,
+                model=ai_response.get("_model", "unknown"),
+                input_prompt=ai_response.get("_input_prompt", ""),
+                raw_response=ai_response.get("_raw", ""),
+                parsed_message=ai_response.get("message", ""),
+                parsed_actions=ai_response.get("actions", []),
+                success=bool(ai_response.get("message")),
+                duration_ms=ai_response.get("_duration_ms"),
+                input_tokens=ai_response.get("_input_tokens"),
+                output_tokens=ai_response.get("_output_tokens"),
+            )
+            await self.ai_log_repo.create(ai_log)
+        except Exception as e:
+            logger.warning(f"Failed to record AI log: {e}")
 
     def verify_signature(self, body: str, signature: str) -> bool:
         """驗證 LINE 簽章"""
@@ -325,6 +352,9 @@ class LineService:
                     for msg in history[-history_limit:]
                 ],
             )
+
+            # 記錄 AI Log
+            await self._record_ai_log(ai_response, user_id=user.id)
 
             response_text = ai_response.get("message", "抱歉，我無法理解。")
 
@@ -1518,6 +1548,9 @@ class LineService:
                 ],
             )
 
+            # 記錄 AI Log
+            await self._record_ai_log(ai_response, user_id=user.id, group_id=group.id)
+
             response_text = ai_response.get("message", "").strip()
 
             # AI 回覆空訊息表示不需要回應，直接返回
@@ -2161,6 +2194,9 @@ class LineService:
                 },
                 history=chat_history,
             )
+
+            # 記錄 AI Log
+            await self._record_ai_log(ai_response, user_id=user.id, group_id=group.id)
 
             response_text = ai_response.get("message", "").strip()
 

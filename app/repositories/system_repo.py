@@ -5,7 +5,7 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.system import AiPrompt, SecurityLog, SuperAdmin
+from app.models.system import AiLog, AiPrompt, SecurityLog, SuperAdmin
 from app.repositories.base import BaseRepository
 
 
@@ -159,11 +159,28 @@ class SecurityLogRepository(BaseRepository[SecurityLog]):
 
     async def get_stats(self) -> dict:
         """取得統計資訊"""
-        from datetime import timedelta
+        from datetime import timedelta, datetime, timezone
         from sqlalchemy import func as sql_func, cast, Date
 
         # 總數
         total = await self.get_total_count()
+
+        # 今日違規數
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_result = await self.session.execute(
+            select(sql_func.count(SecurityLog.id))
+            .where(SecurityLog.created_at >= today_start)
+        )
+        today_count = today_result.scalar() or 0
+
+        # 本週違規數
+        seven_days_ago = now - timedelta(days=7)
+        week_result = await self.session.execute(
+            select(sql_func.count(SecurityLog.id))
+            .where(SecurityLog.created_at >= seven_days_ago)
+        )
+        week_count = week_result.scalar() or 0
 
         # 依觸發原因統計（使用 JSONB 展開）
         # 簡化處理：取得最近 1000 筆統計
@@ -174,10 +191,6 @@ class SecurityLogRepository(BaseRepository[SecurityLog]):
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
         # 最近 7 天每日統計
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-        seven_days_ago = now - timedelta(days=7)
-
         daily_query = (
             select(
                 cast(SecurityLog.created_at, Date).label("date"),
@@ -192,6 +205,76 @@ class SecurityLogRepository(BaseRepository[SecurityLog]):
 
         return {
             "total": total,
+            "total_count": total,  # 前端用
+            "today_count": today_count,  # 前端用
+            "week_count": week_count,  # 前端用
             "by_reason": reason_counts,
             "daily": daily_stats,
         }
+
+
+class AiLogRepository(BaseRepository[AiLog]):
+    """AI 對話日誌 Repository"""
+
+    def __init__(self, session: AsyncSession):
+        super().__init__(AiLog, session)
+
+    async def get_list(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        group_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> List[AiLog]:
+        """取得 AI 日誌列表"""
+        from uuid import UUID
+        from sqlalchemy.orm import selectinload
+
+        query = select(AiLog).options(
+            selectinload(AiLog.user),
+            selectinload(AiLog.group),
+        )
+
+        if group_id:
+            query = query.where(AiLog.group_id == UUID(group_id))
+        if user_id:
+            query = query.where(AiLog.user_id == UUID(user_id))
+
+        query = query.order_by(AiLog.created_at.desc()).offset(offset).limit(limit)
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
+    async def get_total_count(
+        self,
+        group_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> int:
+        """取得日誌總數"""
+        from uuid import UUID
+        from sqlalchemy import func as sql_func
+
+        query = select(sql_func.count()).select_from(AiLog)
+
+        if group_id:
+            query = query.where(AiLog.group_id == UUID(group_id))
+        if user_id:
+            query = query.where(AiLog.user_id == UUID(user_id))
+
+        result = await self.session.execute(query)
+        return result.scalar() or 0
+
+    async def get_by_id_with_relations(self, log_id: str) -> Optional[AiLog]:
+        """根據 ID 取得日誌（包含關聯）"""
+        from uuid import UUID
+        from sqlalchemy.orm import selectinload
+
+        query = (
+            select(AiLog)
+            .options(
+                selectinload(AiLog.user),
+                selectinload(AiLog.group),
+            )
+            .where(AiLog.id == UUID(log_id))
+        )
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()

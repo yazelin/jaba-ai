@@ -24,6 +24,7 @@ from app.repositories import (
     GroupTodayStoreRepository,
     SecurityLogRepository,
 )
+from app.repositories.system_repo import AiLogRepository
 from app.services import MenuService, OrderService, CacheService
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -1610,4 +1611,79 @@ async def get_group_members(
             for m in members
         ],
         "total": len(members),
+    }
+
+
+# ===== AI Log =====
+
+
+@router.get("/ai-logs")
+async def get_ai_logs(
+    limit: int = 20,
+    offset: int = 0,
+    group_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(verify_admin_token),
+):
+    """取得 AI 對話日誌列表"""
+    repo = AiLogRepository(db)
+
+    logs = await repo.get_list(
+        limit=limit,
+        offset=offset,
+        group_id=group_id,
+    )
+    total = await repo.get_total_count(group_id=group_id)
+
+    return {
+        "logs": [
+            {
+                "id": str(log.id),
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+                "user_name": log.user.display_name if log.user else None,
+                "group_name": log.group.name if log.group else None,
+                "model": log.model,
+                "parsed_message": log.parsed_message[:100] + "..." if log.parsed_message and len(log.parsed_message) > 100 else log.parsed_message,
+                "success": log.success,
+                "duration_ms": log.duration_ms,
+                "input_tokens": log.input_tokens,
+                "output_tokens": log.output_tokens,
+            }
+            for log in logs
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/ai-logs/{log_id}")
+async def get_ai_log_detail(
+    log_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(verify_admin_token),
+):
+    """取得 AI 對話日誌詳情"""
+    repo = AiLogRepository(db)
+    log = await repo.get_by_id_with_relations(log_id)
+
+    if not log:
+        raise HTTPException(status_code=404, detail="日誌不存在")
+
+    return {
+        "id": str(log.id),
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+        "user_id": str(log.user_id) if log.user_id else None,
+        "user_name": log.user.display_name if log.user else None,
+        "group_id": str(log.group_id) if log.group_id else None,
+        "group_name": log.group.name if log.group else None,
+        "model": log.model,
+        "input_prompt": log.input_prompt,
+        "raw_response": log.raw_response,
+        "parsed_message": log.parsed_message,
+        "parsed_actions": log.parsed_actions,
+        "success": log.success,
+        "duration_ms": log.duration_ms,
+        "input_tokens": log.input_tokens,
+        "output_tokens": log.output_tokens,
     }

@@ -65,7 +65,7 @@ Jaba AI 使用 PostgreSQL 16 作為主要資料庫，透過 SQLAlchemy 2.0 (Asyn
                                                 └─────────────────┘
 ```
 
-**資料表總計：17 張**
+**資料表總計：18 張**
 
 ## 資料表詳細說明
 
@@ -417,6 +417,34 @@ Jaba AI 使用 PostgreSQL 16 作為主要資料庫，透過 SQLAlchemy 2.0 (Asyn
 ["xml_tags_removed", "length_truncated", "code_blocks_removed"]
 ```
 
+---
+
+### ai_logs - AI 對話日誌
+
+記錄 AI 對話的輸入輸出，供分析和監控。
+
+| 欄位 | 類型 | 說明 |
+|-----|------|------|
+| id | UUID | 主鍵 |
+| user_id | UUID (FK) | 使用者 ID（可為 null） |
+| group_id | UUID (FK) | 群組 ID（可為 null） |
+| model | VARCHAR(32) | AI 模型名稱（haiku, opus 等） |
+| input_prompt | TEXT | 完整的輸入 prompt |
+| raw_response | TEXT | AI 原始回應（含思考過程） |
+| parsed_message | TEXT | 解析後的訊息 |
+| parsed_actions | JSONB | 解析後的動作列表 |
+| success | BOOLEAN | 是否成功 |
+| duration_ms | INTEGER | 執行時間（毫秒） |
+| input_tokens | INTEGER | 輸入 token 數量（估算） |
+| output_tokens | INTEGER | 輸出 token 數量（估算） |
+| created_at | TIMESTAMP | 記錄時間 |
+
+**索引：** `user_id`, `group_id`, `created_at`
+
+**說明：**
+- `user_id` 和 `group_id` 可為 null（超管後台對話無關聯使用者/群組）
+- LINE 對話會記錄關聯的使用者和群組
+
 ## 遷移管理
 
 ### 執行遷移
@@ -438,6 +466,7 @@ uv run alembic current
 |-----|------|------|
 | 001 | `001_initial.py` | 建立所有資料表 |
 | 002 | `002_seed_ai_prompts.py` | 初始化 AI 提示詞 |
+| 003 | `003_add_ai_logs.py` | 新增 AI 對話日誌表 |
 
 ## 資料庫連線設定
 
