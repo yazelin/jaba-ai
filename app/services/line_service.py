@@ -866,11 +866,15 @@ class LineService:
         # 非已知指令時，嘗試用關鍵字匹配店家（僅限管理員）
         if not is_admin_cmd:
             if is_admin:
+                # 主動查詢幫助
+                if text.lower() in ["?", "？", "幫助", "jaba"]:
+                    return self._get_admin_help()
+
                 result = await self._try_set_store_by_keyword(group, user, text)
                 if result:
                     return result
-                # 管理員輸入但沒匹配到任何東西，顯示幫助
-                return self._get_admin_help()
+                # 沒匹配到就不回應，讓管理員正常聊天
+                return None
             return None
 
         # 以下為已知管理員指令，需要管理員權限
