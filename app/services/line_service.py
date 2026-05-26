@@ -473,7 +473,7 @@ class LineService:
             return True, text
 
         # 非點餐中：只回應特定指令
-        if text in ["開單", "菜單"]:
+        if text in ["請開單", "開單", "菜單"]:
             return True, text
 
         # 呼叫幫助（@呷爸、呷爸）
