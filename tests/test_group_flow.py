@@ -443,3 +443,44 @@ async def test_repost_with_new_item_adds_only_new():
     await chat.say(A, "黯然飯*3")
     await chat.say(A, "黯然飯*3\n雞肉飯*1")
     assert sorted(await items_of(A)) == [("雞肉飯", 1, ""), ("黯然飯", 3, "")]
+
+
+# ---------- 店名打錯字（11-02 早上「家鄉味菜單」） ----------
+
+async def test_store_menu_phrase_exact_store():
+    chat = Chat()
+    reply = await chat.say(ADMIN, "家香味菜單")
+    assert "今天吃 家香味排骨便當" in reply
+
+
+async def test_store_name_typo_with_menu_suffix():
+    chat = Chat()
+    reply = await chat.say(ADMIN, "家鄉味菜單")
+    assert "今天吃 家香味排骨便當" in reply
+
+
+async def test_unknown_store_with_menu_suffix_lists_stores():
+    chat = Chat()
+    reply = await chat.say(ADMIN, "麥當勞菜單")
+    assert "找不到「麥當勞」" in reply and "家香味排骨便當" in reply
+    assert await open_sessions() == 0
+
+
+async def test_typo_without_suffix_stays_silent():
+    """沒有「菜單」「開單」結尾，可能只是聊天，不猜"""
+    chat = Chat()
+    assert await chat.say(ADMIN, "家鄉味") is None
+    assert await open_sessions() == 0
+
+
+async def test_typo_during_stale_session():
+    """完整重現 11-02：舊單沒關、管理員打錯字的「家鄉味菜單」"""
+    chat = Chat()
+    await chat.say(ADMIN, "梁社漢")
+    async with async_session_factory() as db:
+        s = (await db.execute(select(OrderSession))).scalar_one()
+        s.started_at = datetime.now(TW_TZ) - timedelta(days=41)
+        await db.commit()
+    reply = await chat.say(ADMIN, "家鄉味菜單")
+    assert "今天吃 家香味排骨便當" in reply
+    assert await open_sessions() == 1
