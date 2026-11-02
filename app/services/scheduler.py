@@ -1,5 +1,6 @@
 """定時任務排程器"""
 import logging
+import os
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -40,6 +41,34 @@ async def cleanup_old_chat_messages():
     logger.info(f"[{datetime.now()}] 清理完成")
 
 
+async def close_open_sessions():
+    """每天下午結束還開著的點餐；沒有任何訂單的單直接刪除"""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.order import OrderSession
+
+    try:
+        async with get_db_context() as db:
+            result = await db.execute(
+                select(OrderSession)
+                .where(OrderSession.status == "ordering")
+                .options(selectinload(OrderSession.orders))
+            )
+            closed = deleted = 0
+            for s in result.scalars().all():
+                if s.orders:
+                    s.status = "ended"
+                    s.ended_at = datetime.now()
+                    closed += 1
+                else:
+                    await db.delete(s)
+                    deleted += 1
+            await db.commit()
+            logger.info(f"自動結單：結束 {closed} 筆、刪除空單 {deleted} 筆")
+    except Exception as e:
+        logger.error(f"自動結單失敗: {e}")
+
+
 def start_scheduler():
     """啟動排程器"""
     # 每月1號凌晨3點執行清理
@@ -48,6 +77,15 @@ def start_scheduler():
         CronTrigger(day=1, hour=3, minute=0),
         id="cleanup_chat_messages",
         name="清理舊對話記錄",
+        replace_existing=True,
+    )
+
+    # 每天自動結單（預設 15:00，台北時間）
+    scheduler.add_job(
+        close_open_sessions,
+        CronTrigger(hour=int(os.getenv("AUTO_CLOSE_HOUR", "15")), minute=0, timezone="Asia/Taipei"),
+        id="close_open_sessions",
+        name="每日自動結單",
         replace_existing=True,
     )
 

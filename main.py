@@ -1,5 +1,6 @@
 """Jaba AI - LINE 群組點餐系統"""
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -182,8 +183,9 @@ async def join_admin(sid):
 # 健康檢查
 @app.get("/health")
 async def health_check():
-    """健康檢查"""
-    return {"status": "healthy"}
+    """健康檢查（含 AI 是否可用）"""
+    from app.services.ai_service import AiService
+    return {"status": "healthy", "ai": AiService.status()}
 
 
 # 根路徑重導向到看板頁面
@@ -241,5 +243,6 @@ if __name__ == "__main__":
         "main:socket_app",
         host="0.0.0.0",
         port=settings.app_port,
-        reload=True,
+        # 正式環境不要自動重載：改程式後重啟服務才生效，避免 git pull 當下就換掉執行中的程式
+        reload=os.getenv("APP_RELOAD", "false").lower() == "true",
     )

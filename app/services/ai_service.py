@@ -11,6 +11,14 @@ from typing import Optional, Tuple
 
 from app.services.cache_service import CacheService
 
+AI_ERROR_MESSAGE = "呷爸的 AI 暫時連不上，請稍後再試。"
+
+# CLI 輸出開頭出現這些字，表示是錯誤訊息而不是模型回覆
+_CLI_ERROR = re.compile(
+    r"Failed to authenticate|OAuth|Invalid API key|API Error|Credit balance|rate limit|Please run /login",
+    re.IGNORECASE,
+)
+
 logger = logging.getLogger("jaba.ai")
 
 
@@ -75,6 +83,49 @@ def estimate_tokens(text: str) -> int:
 
 class AiService:
     """AI 服務 - 使用 Claude Code (CLI)"""
+
+
+    # 最近一次成功、失敗（給 /health 與通知用）
+    last_success_at: Optional[float] = None
+    last_failure_at: Optional[float] = None
+    last_failure: str = ""
+    _last_notified_at: float = 0.0
+
+    @classmethod
+    def record_success(cls) -> None:
+        cls.last_success_at = time.time()
+
+    @classmethod
+    def record_failure(cls, detail: str) -> None:
+        cls.last_failure_at = time.time()
+        cls.last_failure = detail[:300]
+        cls._notify_admin(detail)
+
+    @classmethod
+    def status(cls) -> dict:
+        ok = cls.last_failure_at is None or (
+            cls.last_success_at is not None and cls.last_success_at > cls.last_failure_at
+        )
+        return {"ok": ok, "last_failure": None if ok else cls.last_failure}
+
+    @classmethod
+    def _notify_admin(cls, detail: str) -> None:
+        """AI 失敗時推播給系統管理員（ADMIN_LINE_USER_ID），一小時最多一次"""
+        admin_id = os.getenv("ADMIN_LINE_USER_ID", "")
+        token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+        now = time.time()
+        if not admin_id or not token or now - cls._last_notified_at < 3600:
+            return
+        cls._last_notified_at = now
+        try:
+            from linebot.v3.messaging import ApiClient, Configuration, MessagingApi, PushMessageRequest, TextMessage
+            with ApiClient(Configuration(access_token=token)) as client:
+                MessagingApi(client).push_message(PushMessageRequest(
+                    to=admin_id,
+                    messages=[TextMessage(text=f"呷爸 AI 呼叫失敗，請檢查 .11 上 claude 的登入狀態：\n{detail[:200]}")],
+                ))
+        except Exception as e:
+            logger.error(f"Notify admin failed: {e}")
 
     def __init__(self):
         self.chat_model = "haiku"  # 對話用較快的模型
@@ -204,8 +255,10 @@ class AiService:
         except asyncio.TimeoutError:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error("AI chat timeout")
+            AiService.record_failure("timeout")
             return {
-                "message": "抱歉，回應超時了，請再試一次。",
+                "message": AI_ERROR_MESSAGE,
+                "_error": "timeout",
                 "actions": [],
                 "_raw": "",
                 "_input_prompt": "",
@@ -217,8 +270,10 @@ class AiService:
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"AI chat error: {e}")
+            AiService.record_failure(str(e))
             return {
-                "message": "抱歉，我遇到了一些問題，請稍後再試。",
+                "message": AI_ERROR_MESSAGE,
+                "_error": str(e),
                 "actions": [],
                 "_raw": "",
                 "_input_prompt": "",
@@ -307,18 +362,18 @@ class AiService:
         response_text = stdout.strip()
         logger.debug(f"AI raw response: {response_text[:200]}..." if len(response_text) > 200 else f"AI raw response: {response_text}")
 
-        if not response_text:
-            if return_code != 0:
-                return {
-                    "message": f"CLI 執行失敗：{stderr or '未知錯誤'}",
-                    "actions": [],
-                    "_raw": "",
-                }
+        # CLI 本身出錯（登入過期、額度用完等）：原文只記 log，不回給使用者
+        if return_code != 0 or not response_text or _CLI_ERROR.search(response_text[:300]):
+            detail = (stderr or response_text or "AI 沒有回應")[:300]
+            logger.error(f"AI CLI error (rc={return_code}): {detail}")
+            AiService.record_failure(detail)
             return {
-                "message": "AI 沒有回應",
+                "message": AI_ERROR_MESSAGE,
                 "actions": [],
-                "_raw": "",
+                "_raw": response_text,
+                "_error": detail,
             }
+        AiService.record_success()
 
         try:
             # 策略 1：尋找所有 ```json ``` code blocks，取最後一個
