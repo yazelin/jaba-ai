@@ -1424,8 +1424,16 @@ class LineService(GroupOrderingMixin):
         })
         await flush_events()
 
+        # 價格更新日期：讓收錢的人知道菜單價格可能過期
+        price_lines = []
+        for ts in await self.today_store_repo.get_today_stores(group.id):
+            if ts.store:
+                note = await self._price_note(ts.store_id)
+                if note:
+                    price_lines.append(f"{ts.store.name}：{note}")
+        price_text = ("\n" + "\n".join(price_lines)) if price_lines else ""
         return (
-            f"✅ 點餐結束！\n\n{summary}\n\n"
+            f"✅ 點餐結束！\n\n{summary}{price_text}\n\n"
             "收款：管理員打「已付 名字」標記，打「收款」看誰還沒付"
         )
 
@@ -1444,6 +1452,9 @@ class LineService(GroupOrderingMixin):
                 continue
 
             lines.append(f"\n【{store.name}】")
+            price_note = await self._price_note(store.id)
+            if price_note:
+                lines.append(f"（{price_note}）")
 
             # 取得菜單
             result = await self.session.execute(
