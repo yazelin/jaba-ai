@@ -448,6 +448,28 @@ class GroupOrderingMixin:
                     notes.add("（沒講就照便當算，要單點說「單點」）")
         return sorted(notes)
 
+    # ---------- 價格更新日期 ----------
+
+    PRICE_STALE_DAYS = 90
+
+    async def _price_note(self, store_id) -> str:
+        """「價格 2026/05/29 更新」；超過三個月加一句提醒"""
+        from sqlalchemy import func
+        result = await self.session.execute(
+            select(func.max(MenuItem.updated_at))
+            .join(MenuCategory, MenuItem.category_id == MenuCategory.id)
+            .join(MenuModel, MenuCategory.menu_id == MenuModel.id)
+            .where(MenuModel.store_id == store_id)
+        )
+        last = result.scalar()
+        if not last:
+            return ""
+        last = last.astimezone(TW_TZ)
+        note = f"價格 {last:%Y/%m/%d} 更新"
+        if (_now_tw() - last).days > self.PRICE_STALE_DAYS:
+            note += "，超過三個月，價格可能變了（管理員可打「改價 品項 金額」）"
+        return note
+
     # ---------- 改價 ----------
 
     async def _update_item_price(self, group: Group, today_stores: list, query: str, price: int) -> str:
@@ -461,8 +483,7 @@ class GroupOrderingMixin:
         entry = mr.entry
         item = await self.session.get(MenuItem, UUID(entry.item_id))
         old = int(item.price)
-        item.price = Decimal(price)
-        item.updated_at = datetime.now()
+        item.price = Decimal(price)  # updated_at 由欄位的 onupdate 自動更新
 
         # 今天還開著的單，這個品項一起改價
         active = await self.session_repo.get_active_session(group.id)
@@ -509,7 +530,7 @@ class GroupOrderingMixin:
         order = orders[0]
         order.payment_status = "paid"
         order.paid_amount = order.total_amount
-        order.paid_at = datetime.now()
+        order.paid_at = _now_tw()
         await self.session.commit()
         return f"{order.user.display_name} ${int(order.total_amount)} 已付\n\n" + await self._unpaid_summary(group)
 

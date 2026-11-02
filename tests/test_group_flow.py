@@ -484,3 +484,29 @@ async def test_typo_during_stale_session():
     reply = await chat.say(ADMIN, "家鄉味菜單")
     assert "今天吃 家香味排骨便當" in reply
     assert await open_sessions() == 1
+
+
+# ---------- 價格更新日期 ----------
+
+async def test_price_date_shown_and_stale_warning():
+    chat = Chat()
+    async with async_session_factory() as db:  # 家香味的價格停在 2025-12-24
+        await db.execute(text(
+            "UPDATE menu_items SET updated_at = '2025-12-24 10:00+08' WHERE category_id IN ("
+            " SELECT c.id FROM menu_categories c JOIN menus m ON m.id = c.menu_id"
+            " JOIN stores s ON s.id = m.store_id WHERE s.name = '家香味排骨便當')"
+        ))
+        await db.commit()
+    opened = await chat.say(ADMIN, "家香味")
+    assert "價格 2025/12/24 更新，超過三個月" in opened
+    await chat.say(A, "蔥油雞")
+    end = await chat.say(ADMIN, "結單")
+    assert "家香味排骨便當：價格 2025/12/24 更新" in end
+
+
+async def test_price_update_refreshes_date():
+    chat = Chat()
+    await chat.say(ADMIN, "土雞肉飯")
+    await chat.say(ADMIN, "改價 銷魂飯 80")
+    menu = await chat.say(A, "菜單")
+    assert f"價格 {datetime.now(TW_TZ):%Y/%m/%d} 更新" in menu and "超過三個月" not in menu
