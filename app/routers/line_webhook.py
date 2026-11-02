@@ -75,7 +75,19 @@ async def handle_text_message(service: LineService, event: MessageEvent):
     elif source_type == "room":
         group_id = event.source.room_id
 
-    logger.info(f"Text message from {user_id} in {source_type}: {text[:50]}")
+    # 完整記錄（換行轉成 ⏎，log 一行一則，多行訊息不會只剩第一行）
+    logger.info(f"Text message from {user_id} in {source_type}: {text[:200].replace(chr(10), '⏎')}")
+
+    # 提及：提到呷爸的那幾段要從文字拿掉；提到其他人表示多半不是在跟呷爸說話
+    bot_spans: list[tuple[int, int]] = []
+    mentions_others = False
+    mention = getattr(event.message, "mention", None)
+    if mention and mention.mentionees:
+        for m in mention.mentionees:
+            if getattr(m, "is_self", False):
+                bot_spans.append((m.index, m.length))
+            else:
+                mentions_others = True
 
     # 處理訊息
     await service.handle_message(
@@ -83,6 +95,8 @@ async def handle_text_message(service: LineService, event: MessageEvent):
         group_id=group_id,
         text=text,
         reply_token=event.reply_token,
+        bot_mention_spans=bot_spans,
+        mentions_others=mentions_others,
     )
 
 

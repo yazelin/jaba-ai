@@ -4,6 +4,8 @@ import hmac
 import base64
 import logging
 import os
+import re
+import time
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -48,6 +50,19 @@ from app.repositories import (
     MenuItemRepository,
 )
 from app.services.ai_service import AiService, sanitize_user_input
+from app.services.group_ordering import GroupOrderingMixin, group_lock, _pending_choices
+from app.services.order_parser import (
+    AddItem,
+    CancelAll,
+    ParseResult,
+    ReduceItem,
+    SetOrder,
+    SwitchOption,
+    has_quantity_mark,
+    looks_like_chatter,
+    normalize_text,
+    parse_message,
+)
 from app.services.cache_service import CacheService
 from app.repositories import AiPromptRepository, SecurityLogRepository
 from app.repositories.system_repo import AiLogRepository
@@ -58,8 +73,13 @@ logger = logging.getLogger("jaba.line")
 # 申請連結（可從環境變數讀取完整 URL，預設為相對路徑）
 APPLY_URL = os.environ.get("APP_URL", "") + "/board.html"
 
+AI_BUSY_MESSAGE = "呷爸的 AI 暫時連不上。固定格式的點餐（例如「炸排骨+1」「銷魂飯*2」）還是可以用。"
 
-class LineService:
+# 叫出幫助訊息的詞（正規化後整句相符）
+HELP_KEYWORDS = {"help", "jaba", "呷爸", "@jaba", "@呷爸", "幫助", "說明", "指令", "?", "？", "點餐"}
+
+
+class LineService(GroupOrderingMixin):
     """LINE 服務"""
 
     def __init__(self, session: AsyncSession):
@@ -247,8 +267,13 @@ class LineService:
         group_id: Optional[str],
         text: str,
         reply_token: str,
+        bot_mention_spans: Optional[list] = None,
+        mentions_others: bool = False,
     ) -> None:
         """處理訊息 - 主入口"""
+        text = normalize_text(text, bot_mention_spans)
+        if not text:
+            return
         # 取得或建立使用者
         user = await self.user_repo.get_or_create(user_id)
 
@@ -269,7 +294,9 @@ class LineService:
 
         # 區分個人/群組訊息
         if group_id:
-            await self._handle_group_message(user, group_id, text, reply_token)
+            # 同一群組一次處理一則，避免同時點餐互相覆蓋
+            async with group_lock(group_id):
+                await self._handle_group_message(user, group_id, text, reply_token, mentions_others)
         else:
             await self._handle_personal_message(user, text, reply_token)
 
@@ -382,8 +409,13 @@ class LineService:
         line_group_id: str,
         text: str,
         reply_token: str,
+        mentions_others: bool = False,
     ) -> None:
-        """處理群組訊息 - 根據點餐狀態過濾"""
+        """處理群組訊息（呼叫端已取得群組鎖）
+
+        順序：幫助／ID → 快捷指令 → 點餐中的規則解析 → 管理員指令
+        → 略過閒聊 → 開單前的點餐 → AI
+        """
         text_stripped = text.strip()
 
         # 取得或建立群組
@@ -396,7 +428,7 @@ class LineService:
                 group.name = group_name
                 await self.group_repo.update(group)
 
-        # 特殊指令處理（管理員綁定、ID 查詢、幫助）
+        # 特殊指令處理（ID 查詢、幫助）
         special_response = await self._handle_special_command(
             user, text_stripped, group, is_personal=False
         )
@@ -407,8 +439,7 @@ class LineService:
         # 檢查群組是否已啟用
         if group.status == "suspended":
             # 被凍結的群組，只回應 help 請求
-            text_lower = text.strip().lower()
-            if text_lower in ["help", "jaba", "呷爸", "@jaba", "@呷爸"]:
+            if text_stripped.lower() in HELP_KEYWORDS:
                 await self.reply_message(
                     reply_token,
                     "⚠️ 此群組已被管理員凍結\n\n"
@@ -428,9 +459,9 @@ class LineService:
             from app.broadcast import emit_group_update
             await emit_group_update({"action": "member_added", "group_id": str(group.id)})
 
-        # 檢查是否在點餐中
+        # 進行中的單不是今天開的就先結束（舊單不再卡住新的一天）
         active_session = await self.session_repo.get_active_session(group.id)
-        is_ordering = active_session is not None
+        active_session = await self._close_stale_session(group, active_session)
 
         # 快捷指令處理（開單、收單、菜單等）- 所有人都可用
         quick_response = await self._handle_quick_command(
@@ -440,49 +471,112 @@ class LineService:
             await self.reply_message(reply_token, quick_response)
             return
 
-        # 管理員指令處理（僅在非點餐中時）
-        if not is_ordering:
-            admin_response = await self._handle_admin_command(user, group, text_stripped)
-            if admin_response:
-                await self.reply_message(reply_token, admin_response)
+        today_stores = await self.today_store_repo.get_today_stores(group.id)
+
+        # 點餐中：固定格式的點餐先處理，避免管理員點「雞肉飯」被當成換店
+        if active_session and today_stores:
+            if await self._try_rule_order(user, group, active_session, today_stores, text_stripped, reply_token):
                 return
 
-        # 根據點餐狀態決定是否回應
-        should_reply, cleaned_message = self._should_respond_in_group(
-            text_stripped, is_ordering
-        )
-
-        if not should_reply:
+        # 管理員指令（點餐中也生效）
+        admin_response = await self._handle_admin_command(user, group, text_stripped, active_session)
+        if admin_response:
+            await self.reply_message(reply_token, admin_response)
             return
 
-        # 呼叫 AI 處理
+        # 明顯不是點餐（@ 其他人、網址、長公告），不回也不問 AI
+        if looks_like_chatter(text_stripped, mentions_others):
+            return
+
+        if not active_session:
+            # 開單前就點的餐：不再丟掉
+            if has_quantity_mark(text_stripped) and len(text_stripped) <= 60:
+                if today_stores:
+                    if await self._try_rule_order(
+                        user, group, None, today_stores, text_stripped, reply_token, auto_open=True
+                    ):
+                        return
+                elif not re.search(r"[請?？嗎]", text_stripped):
+                    reminder = await self._buffer_before_open(user, group, text_stripped)
+                    if reminder:
+                        await self.reply_message(reply_token, reminder)
+                    return
+
+            # 沒開單時只回應叫呷爸（幫助訊息已在前面處理），其他都是聊天
+            return
+
+        # 點餐中、規則看不懂 → AI
         await self._handle_ai_chat(user, group, active_session, text, reply_token)
 
-    def _should_respond_in_group(
-        self, text: str, is_ordering: bool
-    ) -> tuple[bool, str]:
-        """判斷群組中是否應該回應
+    async def _try_rule_order(
+        self,
+        user: User,
+        group: Group,
+        session: Optional[OrderSession],
+        today_stores: list,
+        text: str,
+        reply_token: str,
+        auto_open: bool = False,
+    ) -> bool:
+        """用規則解析點餐；看不懂回傳 False 交給下一關"""
+        from app.broadcast import emit_order_update, flush_events
 
-        Returns:
-            (should_respond, cleaned_message)
-        """
-        text_lower = text.lower()
+        # 店名、「XX菜單」交給管理員指令，不當成點餐（「土雞肉飯」不要變成點雞肉飯）
+        if text.endswith("菜單") or any(
+            ts.store and len(text) >= 2 and (ts.store.name.startswith(text) or text.startswith(ts.store.name))
+            for ts in today_stores
+        ):
+            return False
 
-        if is_ordering:
-            # 點餐中：所有訊息都回應
-            return True, text
+        menu, store_of = await self._load_menu(today_stores)
+        key = (str(group.id), str(user.id))
+        pend = _pending_choices.get(key)
+        awaiting = bool(pend and pend[2] > time.time())
+        res = parse_message(text, menu, awaiting_choice=awaiting)
+        if res is None:
+            return False
 
-        # 非點餐中：只回應特定指令
-        if text in ["請開單", "開單", "菜單"]:
-            return True, text
+        prefix = ""
+        if session is None:
+            if not auto_open:
+                return False
+            session = await self._open_session(user, group, today_stores)
+            store_names = "、".join(ts.store.name for ts in today_stores if ts.store)
+            prefix = f"已用 {store_names} 開單。\n"
+        elif len(res.ops) == 1 and isinstance(res.ops[0], SwitchOption):
+            # 「飯」「便當」這類回答，本人沒點東西時交給 AI
+            if not await self._user_order(user, session):
+                return False
 
-        # 呼叫幫助（@呷爸、呷爸）
-        trigger_keywords = ["jaba", "呷爸", "點餐"]
-        for keyword in trigger_keywords:
-            if text_lower in [keyword.lower(), f"@{keyword.lower()}"]:
-                return True, "help"
+        await self.chat_repo.create(ChatMessage(
+            group_id=group.id, user_id=user.id, session_id=session.id, role="user", content=text,
+        ))
+        changed, message = await self._apply_ops(user, group, session, res, menu, store_of)
+        await self.session.commit()
 
-        return False, text
+        if changed:
+            await emit_order_update(str(group.id), {
+                "group_id": str(group.id),
+                "action": "updated",
+                "user_id": str(user.id),
+                "display_name": user.display_name,
+            })
+            await flush_events()
+
+        if message == "":
+            return True
+        if message is None:
+            message = await self._confirm_line(user, session, self._default_notes(res, menu))
+        if prefix:
+            buffered = await self._apply_buffered_orders(group, session, today_stores)
+            message = prefix + message + (f"\n\n{buffered}" if buffered else "")
+
+        await self.chat_repo.create(ChatMessage(
+            group_id=group.id, session_id=session.id, role="assistant", content=message,
+        ))
+        await self.session.commit()
+        await self.reply_message(reply_token, message)
+        return True
 
     # ========== 特殊指令處理 ==========
 
@@ -497,8 +591,7 @@ class LineService:
         text_lower = text.lower()
 
         # 幫助請求 (pending 群組走 AI 引導流程)
-        help_keywords = ["help", "jaba", "呷爸", "@jaba", "@呷爸"]
-        if text_lower in help_keywords:
+        if text_lower in HELP_KEYWORDS:
             # pending 群組不在這處理，讓它走 _handle_pending_group_chat (AI 引導)
             if group and group.status != "active":
                 return None
@@ -588,7 +681,9 @@ class LineService:
                 lines.append("")
                 if active_session:
                     lines.append("【可用指令】")
-                    lines.append("• 直接說出餐點即可點餐")
+                    lines.append("• 直接打餐點：「炸排骨+1」「銷魂飯*2」")
+                    lines.append("• 幫別人點：「銷魂飯(小李)*1」")
+                    lines.append("• 減少、取消：「少一個蔥油雞」「取消」")
                     lines.append("• 「+1」或「我也要」跟單")
                     lines.append("• 「收單」或「結單」結束點餐")
                     lines.append("• 「菜單」查看今日菜單")
@@ -603,11 +698,11 @@ class LineService:
                 if is_admin:
                     lines.append("")
                     lines.append("【管理員指令】")
+                    lines.append("• 直接輸入店名 - 設定今日店家並開單")
                     lines.append("• 「今日」查看今日店家")
-                    lines.append("• 直接輸入店名 - 設定今日店家")
-                    lines.append("• 「加 [店名]」新增店家")
-                    lines.append("• 「移除 [店名]」移除店家")
-                    lines.append("• 「清除」清除所有")
+                    lines.append("• 「加 [店名]」「移除 [店名]」「清除」")
+                    lines.append("• 「改價 品項 金額」")
+                    lines.append("• 「已付 名字」「收款」")
                     lines.append("• 「解除管理員」解除身份")
                 else:
                     lines.append("")
@@ -829,138 +924,127 @@ class LineService:
         user: User,
         group: Group,
         text: str,
+        active_session: Optional[OrderSession] = None,
     ) -> Optional[str]:
-        """處理群組管理員指令（綁定管理員、今日店家管理）
+        """處理群組管理員指令（點餐中也生效）
 
         - 「管理員 [代碼]」：任何人都可以嘗試綁定
-        - 其他指令：僅限群組管理員可執行，非管理員靜默忽略
+        - 「XX菜單」：非管理員顯示今日菜單
+        - 其他指令：僅限群組管理員，非管理員靜默忽略
         """
-        # 管理員綁定指令（不需要先是管理員）
-        if text.startswith("管理員"):
-            group_code = text[3:].strip()  # 移除「管理員」
+        # 管理員綁定指令（不需要先是管理員），「管理員1234」也可以
+        if text.startswith("管理員") and text != "管理員指令":
+            group_code = text[3:].strip()
             if not group_code:
                 return "⚠️ 請輸入群組代碼\n例如：管理員 1234"
             return await self._bind_admin(user, group, group_code)
 
-        # 解除管理員指令（需要是管理員）
         if text == "解除管理員":
             return await self._unbind_admin(user, group)
 
-        # 檢查是否為其他管理員指令
-        admin_commands = [
-            "今日",
-            "清除",
-        ]
-        admin_prefixes = [
-            "加",
-            "移除",
-        ]
-
-        is_admin_cmd = text in admin_commands or any(
-            text.startswith(prefix) for prefix in admin_prefixes
-        )
-
-        # 檢查使用者是否為群組管理員
         is_admin = await self.admin_repo.is_admin(group.id, user.id)
-
-        # 非已知指令時，嘗試用關鍵字匹配店家（僅限管理員）
-        if not is_admin_cmd:
-            if is_admin:
-                # 主動查詢幫助
-                if text.lower() in ["?", "？", "幫助", "jaba"]:
-                    return self._get_admin_help()
-
-                result = await self._try_set_store_by_keyword(group, user, text)
-                if result:
-                    return result
-                # 沒匹配到就不回應，讓管理員正常聊天
-                return None
-            return None
-
-        # 以下為已知管理員指令，需要管理員權限
         if not is_admin:
-            # 非管理員靜默忽略
+            if len(text) > 2 and text.endswith("菜單"):
+                return await self._get_menu_summary(group)
             return None
 
-        # 查詢今日店家
-        if text == "今日":
+        if text in ("今日", "今日店家", "今天"):
             return await self._get_today_stores_summary(group)
-
-        # 清除今日店家
-        if text == "清除":
+        if text in ("清除", "清除店家"):
             return await self._clear_today_stores(group, user)
+        if text in ("管理員指令", "管理員幫助"):
+            return self._get_admin_help()
 
-        # 加 XXX（新增一家）
-        if text.startswith("加"):
-            store_name = text[1:].strip()  # 移除「加」
-            if not store_name:
-                return "⚠️ 請輸入店家名稱\n例如：加 好吃便當"
-            return await self._add_today_store(group, user, store_name)
+        today_stores = await self.today_store_repo.get_today_stores(group.id)
 
-        # 移除 XXX
-        if text.startswith("移除"):
-            store_name = text[2:].strip()  # 移除「移除」
-            if not store_name:
-                return "⚠️ 請輸入店家名稱\n例如：移除 好吃便當"
-            return await self._remove_today_store(group, user, store_name)
+        m = re.match(r"^改價\s*(.+?)\s*\$?\s*(\d+)\s*元?$", text)
+        if m:
+            if not today_stores:
+                return "⚠️ 尚未設定今日店家"
+            return await self._update_item_price(group, today_stores, m.group(1), int(m.group(2)))
 
+        m = re.match(r"^已付\s*(.+)$", text)
+        if m:
+            return await self._mark_paid_by_name(group, m.group(1).strip())
+        if text in ("收款", "誰還沒付", "還沒付", "未付"):
+            return await self._unpaid_summary(group)
+
+        m = re.match(r"^加\s*(.+)$", text)
+        if m and await self._match_stores(group, m.group(1).strip()):
+            return await self._add_today_store(group, user, m.group(1).strip())
+        m = re.match(r"^移除\s*(.+)$", text)
+        if m and any(ts.store and m.group(1).strip() in ts.store.name for ts in today_stores):
+            return await self._remove_today_store(group, user, m.group(1).strip())
+
+        # 店名：「家香味」「家香味菜單」「今日店家梁社漢」「炭吉開單」
+        name = re.sub(r"^(今日店家|今天吃|今日)", "", text)
+        name = re.sub(r"(的?菜單|開單)$", "", name).strip()
+        if name and len(name) <= 15:
+            return await self._select_store(user, group, name, active_session, today_stores)
         return None
 
-    async def _try_set_store_by_keyword(
-        self, group: Group, user: User, keyword: str
+    async def _match_stores(self, group: Group, keyword: str) -> list[Store]:
+        """群組可用店家中，名稱包含關鍵字的；完全相符優先"""
+        stores = await self._get_stores_for_group(group)
+        exact = [s for s in stores if s.name == keyword]
+        if exact:
+            return exact
+        return [s for s in stores if keyword in s.name]
+
+    async def _select_store(
+        self,
+        user: User,
+        group: Group,
+        keyword: str,
+        active_session: Optional[OrderSession],
+        today_stores: list,
     ) -> Optional[str]:
-        """嘗試用關鍵字匹配店家並設定為今日店家"""
-        from app.broadcast import emit_store_change, flush_events
-
-        # 模糊匹配店名
-        result = await self.session.execute(
-            select(Store).where(Store.name.contains(keyword))
-        )
-        matched_stores = result.scalars().all()
-
-        if not matched_stores:
-            # 沒有匹配，不處理
+        """管理員輸入店名：設定今日店家並開單；對不到店家回傳 None"""
+        matched = await self._match_stores(group, keyword)
+        if not matched:
             return None
+        if len(matched) > 1:
+            names = "\n".join(f"• {s.name}" for s in matched)
+            return f"🔍 「{keyword}」對到好幾間：\n{names}\n\n請打完整店名"
+        store = matched[0]
+        today_ids = {ts.store_id for ts in today_stores}
 
-        if len(matched_stores) == 1:
-            # 只有一間，直接設定
-            store = matched_stores[0]
-            await self.today_store_repo.clear_today_stores(group.id)
-            await self.today_store_repo.set_today_store(group.id, store.id, user.id)
-            CacheService.clear_today_stores(str(group.id))
-            # 先提交交易，確保其他連線可以讀到新資料
-            await self.session.commit()
-            # 廣播店家變更
-            await emit_store_change(str(group.id), {
-                "group_id": str(group.id),
-                "action": "set",
-                "store_name": store.name,
-            })
-            await flush_events()
-            return f"✅ 已設定今日店家：{store.name}"
+        if active_session:
+            if store.id in today_ids:
+                return f"目前正在點 {store.name}，直接點餐就好"
+            full = await self.session_repo.get_with_orders(active_session.id)
+            if full and full.orders:
+                current = "、".join(ts.store.name for ts in today_stores if ts.store) or "目前店家"
+                return f"⚠️ 已經有 {len(full.orders)} 個人點了 {current}，要換店請先「結單」"
+            await self._set_today_store(group, user, store.name)
+            return f"✅ 改成 {store.name}\n\n{await self._get_menu_summary(group)}"
 
-        # 多間匹配，列出選項
-        lines = [f"🔍 找到 {len(matched_stores)} 間符合「{keyword}」的店家：", ""]
-        for store in matched_stores:
-            lines.append(f"• {store.name}")
-        lines.append("")
-        lines.append("請輸入完整店名")
-
-        return "\n".join(lines)
+        if store.id not in today_ids or len(today_ids) != 1:
+            await self._set_today_store(group, user, store.name)
+        today_stores = await self.today_store_repo.get_today_stores(group.id)
+        session = await self._open_session(user, group, today_stores)
+        buffered = await self._apply_buffered_orders(group, session, today_stores)
+        menu_text = await self._get_menu_summary(group)
+        reply = (
+            f"🍱 今天吃 {store.name}，開始點餐！\n\n{menu_text}\n\n"
+            "直接打餐點就好，例如「炸排骨+1」「銷魂飯*2」。說「結單」結束。"
+        )
+        if buffered:
+            reply += f"\n\n{buffered}"
+        return reply
 
     def _get_admin_help(self) -> str:
         """取得管理員指令幫助"""
         return (
             "📋 管理員指令說明\n\n"
-            "【查看/設定今日店家】\n"
-            "• 「今日」查看目前設定\n"
-            "• 直接輸入店名即可設定\n\n"
-            "【其他操作】\n"
-            "• 「加 [店名]」新增店家\n"
-            "• 「移除 [店名]」移除店家\n"
-            "• 「清除」清除所有\n"
-            "• 「解除管理員」解除身份\n\n"
-            "💡 輸入「今日」可查看可用店家列表"
+            "【開單】\n"
+            "• 直接輸入店名（如「家香味」「梁社漢菜單」）設定店家並開單\n"
+            "• 「今日」查看目前設定與可用店家\n"
+            "• 「加 [店名]」「移除 [店名]」「清除」調整店家\n\n"
+            "【價格與收款】\n"
+            "• 「改價 銷魂飯 75」改菜單價格\n"
+            "• 「已付 名字」標記已付款，「收款」看誰還沒付\n\n"
+            "• 「解除管理員」解除身份"
         )
 
     async def _bind_admin(
@@ -979,16 +1063,7 @@ class LineService:
         # 綁定成功：將用戶加入管理員
         await self.admin_repo.add_admin(group.id, user.id)
 
-        return (
-            "✅ 已綁定為群組管理員！\n\n"
-            "現在可以使用以下指令：\n"
-            "• 今日 - 查看今日店家\n"
-            "• 直接輸入店名 - 設定今日店家\n"
-            "• 加 [店名] - 新增店家\n"
-            "• 移除 [店名] - 移除店家\n"
-            "• 清除 - 清除所有\n"
-            "• 解除管理員 - 解除管理員身份"
-        )
+        return "✅ 已綁定為群組管理員！\n\n" + self._get_admin_help()
 
     async def _unbind_admin(self, user: User, group: Group) -> str:
         """解除管理員身份"""
@@ -1251,19 +1326,19 @@ class LineService:
         text_lower = text.lower()
 
         # 開單
-        if text == "開單":
+        if text in ("開單", "請開單", "開單囉", "開單了", "開始點餐"):
             return await self._start_ordering(user, group, active_session)
 
         # 收單/結單
-        if text_lower in ["收單", "結單"]:
+        if text_lower in ("收單", "結單", "收單囉", "結單囉", "關單", "結束點餐"):
             return await self._end_ordering(user, group, active_session)
 
         # 菜單
-        if text == "菜單":
+        if text in ("菜單", "今日菜單", "看菜單", "請顯示菜單", "顯示菜單"):
             return await self._get_menu_summary(group)
 
         # 目前訂單
-        if text_lower in ["目前訂單", "訂單", "查看訂單", "訂單狀況", "點了什麼"]:
+        if text_lower in ["目前訂單", "訂單", "查看訂單", "訂單狀況", "點了什麼", "統計"]:
             if active_session:
                 return await self._get_session_summary_by_id(active_session.id)
             return None
@@ -1277,44 +1352,23 @@ class LineService:
         active_session: Optional[OrderSession],
     ) -> str:
         """開始群組點餐"""
-        from app.broadcast import emit_session_status, flush_events
-
         if active_session:
             return "⚠️ 此群組已經在點餐中了！\n\n直接說出你要點的餐點即可。"
 
-        # 檢查是否有設定今日店家
         today_stores = await self.today_store_repo.get_today_stores(group.id)
         if not today_stores:
-            return "⚠️ 尚未設定今日店家，無法開單\n\n請管理員先設定今日店家"
+            return "⚠️ 尚未設定今日店家，無法開單\n\n請管理員輸入店名，例如「家香味」，會直接開單"
 
-        # 開始新 session
-        new_session = await self.session_repo.start_session(group.id, user.id)
-
-        # 記錄系統訊息標記新 session 開始（讓 AI 知道這是新的點餐）
-        store_names = "、".join([ts.store.name for ts in today_stores])
-        await self.chat_repo.add_message(
-            role="system",
-            content=f"=== 新的點餐開始 ===\n今日店家：{store_names}\n由 {user.display_name} 發起",
-            group_id=group.id,
-            session_id=new_session.id,
-        )
-
-        # 先 commit 再廣播，確保其他連線能讀到更新
-        await self.session.commit()
-
-        # 廣播 Session 狀態
-        await emit_session_status(str(group.id), {
-            "group_id": str(group.id),
-            "session_id": str(new_session.id),
-            "status": "ordering",
-            "started_by": user.display_name,
-        })
-        await flush_events()
-
-        # 取得今日菜單摘要
+        new_session = await self._open_session(user, group, today_stores)
+        buffered = await self._apply_buffered_orders(group, new_session, today_stores)
         menu_text = await self._get_menu_summary(group)
-
-        return f"🍱 開始群組點餐！\n\n{menu_text}\n\n直接說出餐點即可，說「收單」或「結單」結束點餐。"
+        reply = (
+            f"🍱 開始群組點餐！\n\n{menu_text}\n\n"
+            "直接打餐點就好，例如「炸排骨+1」「銷魂飯*2」。說「結單」結束。"
+        )
+        if buffered:
+            reply += f"\n\n{buffered}"
+        return reply
 
     async def _end_ordering(
         self,
@@ -1326,7 +1380,7 @@ class LineService:
         from app.broadcast import emit_session_status, flush_events
 
         if not active_session:
-            return "⚠️ 目前沒有進行中的點餐。\n\n說「開單」開始群組點餐。"
+            return "目前沒有在點餐。管理員輸入店名（例如「家香味」）就會開單。"
 
         # 結束 session
         await self.session_repo.end_session(active_session, user.id)
@@ -1347,7 +1401,10 @@ class LineService:
         })
         await flush_events()
 
-        return f"✅ 點餐結束！\n\n{summary}"
+        return (
+            f"✅ 點餐結束！\n\n{summary}\n\n"
+            "收款：管理員打「已付 名字」標記，打「收款」看誰還沒付"
+        )
 
     async def _get_menu_summary(self, group: Group) -> str:
         """取得今日菜單摘要"""
@@ -1414,7 +1471,8 @@ class LineService:
             user_name = order.user.display_name if order.user else "未知"
             user_total = int(order.total_amount)
 
-            lines.append(f"👤 {user_name}（${user_total}）")
+            paid = "，已付" if order.payment_status == "paid" else ""
+            lines.append(f"👤 {user_name}（${user_total}{paid}）")
 
             for item in order.items:
                 item_text = f"  • {item.name}"
@@ -1556,66 +1614,140 @@ class LineService:
             await self._record_ai_log(ai_response, user_id=user.id, group_id=group.id)
 
             response_text = ai_response.get("message", "").strip()
+            if ai_response.get("_error"):
+                await self.reply_message(reply_token, AI_BUSY_MESSAGE)
+                return
 
             # AI 回覆空訊息表示不需要回應，直接返回
             if not response_text and not ai_response.get("actions"):
                 logger.warning(f"AI returned empty response for message: {text}")
                 return
 
-            ai_message_only = response_text  # 保留 AI 原始訊息（不含摘要）
-
-            # 處理 AI 動作
-            actions = ai_response.get("actions", [])
+            reply_text = response_text
+            actions = ai_response.get("actions", []) or []
             if actions and active_session:
-                action_results = await self._execute_group_actions(
-                    user, group, active_session, today_stores, actions
-                )
-                # 檢查動作類型
-                has_create_or_update = any(
-                    a.get("type") in ["group_create_order", "group_remove_item", "group_update_order"]
-                    for a in actions
-                )
-                has_cancel = any(a.get("type") == "group_cancel_order" for a in actions)
-                has_success = any(r.get("success") for r in action_results)
+                menu, store_of = await self._load_menu(today_stores)
+                res, errors = self._ai_actions_to_ops(actions, text, menu)
+                changed = False
+                if res.ops:
+                    changed, op_message = await self._apply_ops(
+                        user, group, active_session, res, menu, store_of
+                    )
+                    await self.session.commit()
+                    if op_message:
+                        errors.append(op_message)
+                if changed:
+                    from app.broadcast import emit_order_update, flush_events
+                    await emit_order_update(str(group.id), {
+                        "group_id": str(group.id),
+                        "action": "updated",
+                        "user_id": str(user.id),
+                        "display_name": user.display_name,
+                    })
+                    await flush_events()
+                    # 訂單內容一律由資料庫產生，不用 AI 自己寫的
+                    reply_text = await self._confirm_line(
+                        user, active_session, self._default_notes(res, menu)
+                    )
+                if errors:
+                    reply_text = (reply_text + "\n\n" if changed else "") + "\n".join(errors)
 
-                # 附加錯誤訊息
-                for result in action_results:
-                    if result.get("error"):
-                        response_text += f"\n\n⚠️ {result['error']}"
-
-                # 如果有成功的訂單動作，附加摘要
-                if (has_create_or_update or has_cancel) and has_success:
-                    await self.session.flush()
-                    summary = await self._get_session_summary_by_id(active_session.id)
-                    response_text += f"\n\n{summary}"
-
-            # 如果最終訊息為空，不回覆也不記錄
-            if not response_text.strip():
+            if not reply_text.strip():
                 return
 
-            # 記錄 AI 回應（只保存對話訊息，不含訂單摘要）
-            if ai_message_only:
-                ai_msg = ChatMessage(
-                    group_id=group.id,
-                    session_id=active_session.id if active_session else None,
-                    role="assistant",
-                    content=ai_message_only,
-                )
-                await self.chat_repo.create(ai_msg)
+            ai_msg = ChatMessage(
+                group_id=group.id,
+                session_id=active_session.id if active_session else None,
+                role="assistant",
+                content=reply_text,
+            )
+            await self.chat_repo.create(ai_msg)
+            await emit_chat_message(str(group.id), {
+                "group_id": str(group.id),
+                "display_name": "呷爸",
+                "role": "assistant",
+                "content": reply_text,
+            })
 
-                # 廣播 AI 回應
-                await emit_chat_message(str(group.id), {
-                    "group_id": str(group.id),
-                    "display_name": "呷爸",
-                    "role": "assistant",
-                    "content": ai_message_only,
-                })
-
-            await self.reply_message(reply_token, response_text)
+            await self.reply_message(reply_token, reply_text)
 
         except Exception as e:
             logger.error(f"AI chat error: {e}", exc_info=True)
-            await self.reply_message(reply_token, "抱歉，我現在有點忙，請稍後再試。")
+            await self.reply_message(reply_token, AI_BUSY_MESSAGE)
+
+    @staticmethod
+    def _ai_actions_to_ops(actions: list, text: str, menu) -> tuple[ParseResult, list[str]]:
+        """把 AI 回傳的動作轉成訂單操作，並套用安全規則
+
+        - 品項名稱一律重新對菜單，對不到就不寫入
+        - 使用者沒說取消、不要、算了，就不刪整筆訂單
+        - 同一則同時「取消整筆」和「新增」，視為整份重設
+        """
+        ops, errors = [], []
+        # 「要不要」是問句，不算取消
+        explicit_cancel = bool(re.search(r"取消|(?<!要)不要|算了|不用了|刪掉", text))
+        additive = bool(re.search(r"再|追加|加點|多加", text))
+
+        def to_adds(items: list) -> list:
+            adds = []
+            for it in items or []:
+                name = str(it.get("name", "")).strip()
+                note = str(it.get("note") or "").strip()
+                category = str(it.get("category") or "")
+                choice = None
+                if note in ("飯", "麵"):
+                    choice, note = note, ""
+                elif name.endswith("麵"):
+                    choice = "麵"
+                hint = "單點" if "單點" in category else ("便當" if "便當" in category else None)
+                mr = menu.match(name, category_hint=hint)
+                entry = mr.entry or (mr.candidates[0] if mr.ambiguous and hint else None)
+                if not entry:
+                    errors.append(f"菜單中找不到「{name}」")
+                    continue
+                note = re.sub(r"^代點", "", note).strip()
+                try:
+                    qty = max(1, min(int(it.get("quantity", 1)), 20))
+                except (TypeError, ValueError):
+                    qty = 1
+                adds.append(AddItem(entry=entry, quantity=qty, proxy=note, choice=choice,
+                                    defaulted=entry.has_rice_noodle_choice and choice is None,
+                                    additive=additive))
+            return adds
+
+        types = [a.get("type") for a in actions]
+        if "group_cancel_order" in types and "group_create_order" in types:
+            items = [it for a in actions if a.get("type") == "group_create_order"
+                     for it in (a.get("data") or {}).get("items", [])]
+            adds = to_adds(items)
+            if adds:
+                ops.append(SetOrder(adds))
+            return ParseResult(ops=ops), errors
+
+        for action in actions:
+            t, data = action.get("type"), action.get("data") or {}
+            if t == "group_create_order":
+                ops.extend(to_adds(data.get("items", [])))
+            elif t == "group_set_order":
+                adds = to_adds(data.get("items", []))
+                if adds:
+                    ops.append(SetOrder(adds))
+            elif t == "group_remove_item":
+                qty = data.get("quantity")
+                ops.append(ReduceItem(str(data.get("item_name", "")) or None,
+                                      int(qty) if str(qty).isdigit() else None))
+            elif t == "group_cancel_order":
+                if explicit_cancel:
+                    ops.append(CancelAll())
+                else:
+                    logger.warning(f"Blocked AI cancel_order without explicit cancel: {text}")
+            elif t == "group_update_order":
+                old = str(data.get("old_item", ""))
+                adds = to_adds([data.get("new_item") or {}])
+                if old and adds:
+                    ops.append(ReduceItem(old, None))
+                    ops.extend(adds)
+        return ParseResult(ops=ops), errors
 
     async def _build_menus_context(self, today_stores: list) -> dict:
         """建構菜單上下文"""
@@ -1659,197 +1791,6 @@ class LineService:
 
     # ========== 動作執行 ==========
 
-    async def _execute_group_actions(
-        self,
-        user: User,
-        group: Group,
-        session: OrderSession,
-        today_stores: list,
-        actions: list,
-    ) -> list:
-        """執行群組點餐動作"""
-        from app.broadcast import emit_order_update, flush_events
-
-        results = []
-        broadcast_action = None  # 記錄最後一個成功動作的類型
-
-        for action in actions:
-            action_type = action.get("type")
-            action_data = action.get("data", {})
-
-            try:
-                if action_type == "group_create_order":
-                    result = await self._action_create_order(
-                        user, session, today_stores, action_data
-                    )
-                    if result.get("success"):
-                        broadcast_action = "created"
-                elif action_type == "group_remove_item":
-                    result = await self._action_remove_item(
-                        user, session, action_data
-                    )
-                    if result.get("success"):
-                        broadcast_action = "updated"
-                elif action_type == "group_cancel_order":
-                    result = await self._action_cancel_order(user, session)
-                    if result.get("success"):
-                        broadcast_action = "cancelled"
-                elif action_type == "group_update_order":
-                    result = await self._action_update_order(
-                        user, session, today_stores, action_data
-                    )
-                    if result.get("success"):
-                        broadcast_action = "updated"
-                else:
-                    result = {"success": True, "message": "No action needed"}
-
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Action {action_type} error: {e}")
-                results.append({"success": False, "error": str(e)})
-
-        # 如果有成功的動作，先 commit 再廣播
-        if broadcast_action:
-            await self.session.commit()
-            await emit_order_update(str(group.id), {
-                "group_id": str(group.id),
-                "action": broadcast_action,
-                "user_id": str(user.id),
-                "display_name": user.display_name,
-            })
-            await flush_events()
-
-        return results
-
-    async def _action_create_order(
-        self,
-        user: User,
-        session: OrderSession,
-        today_stores: list,
-        data: dict,
-    ) -> dict:
-        """建立訂單"""
-        items = data.get("items", [])
-        if not items:
-            return {"success": False, "error": "沒有品項"}
-
-        # 取得或建立使用者訂單
-        order = await self.order_repo.get_by_session_and_user(session.id, user.id)
-
-        if not order:
-            # 取得第一個今日店家
-            store_id = today_stores[0].store_id if today_stores else None
-            if not store_id:
-                return {"success": False, "error": "今日尚未設定店家"}
-
-            order = Order(
-                session_id=session.id,
-                user_id=user.id,
-                store_id=store_id,
-            )
-            order = await self.order_repo.create(order)
-
-        # 新增品項
-        for item_data in items:
-            item_name = item_data.get("name", "")
-            quantity = item_data.get("quantity", 1)
-            note = item_data.get("note", "")
-            category = item_data.get("category", None)  # AI 可選擇性提供類別
-
-            # 從菜單找價格（有類別會更精確）
-            price = await self._find_item_price(today_stores, item_name, category)
-
-            # 找不到價格（品項不在菜單中）
-            if price == 0:
-                return {"success": False, "error": f"菜單中找不到「{item_name}」"}
-
-            order_item = OrderItem(
-                order_id=order.id,
-                name=item_name,
-                quantity=quantity,
-                unit_price=Decimal(str(price)),
-                subtotal=Decimal(str(price * quantity)),
-                note=note,
-            )
-            await self.order_item_repo.create(order_item)
-
-        # 重新計算總金額
-        await self.order_repo.calculate_total(order)
-
-        # 確保資料已寫入資料庫
-        await self.session.flush()
-
-        return {"success": True, "order_id": str(order.id)}
-
-    async def _action_remove_item(
-        self,
-        user: User,
-        session: OrderSession,
-        data: dict,
-    ) -> dict:
-        """移除品項"""
-        item_name = data.get("item_name", "")
-        quantity = data.get("quantity", 1)
-
-        order = await self.order_repo.get_by_session_and_user(session.id, user.id)
-        if not order:
-            return {"success": False, "error": "你目前沒有訂單"}
-
-        # 找到品項
-        for item in order.items:
-            if item.name == item_name or item_name in item.name:
-                if quantity >= item.quantity:
-                    await self.order_item_repo.delete(item)
-                else:
-                    item.quantity -= quantity
-                    item.subtotal = item.unit_price * item.quantity
-                    await self.order_item_repo.update(item)
-
-                # 重新計算總金額
-                await self.order_repo.calculate_total(order)
-
-                # 如果沒有品項了，刪除訂單
-                if not order.items:
-                    await self.order_repo.delete(order)
-
-                await self.session.flush()
-                return {"success": True}
-
-        return {"success": False, "error": f"找不到品項：{item_name}"}
-
-    async def _action_cancel_order(
-        self,
-        user: User,
-        session: OrderSession,
-    ) -> dict:
-        """取消訂單"""
-        order = await self.order_repo.get_by_session_and_user(session.id, user.id)
-        if not order:
-            return {"success": False, "error": "你目前沒有訂單"}
-
-        await self.order_repo.delete(order)
-        await self.session.flush()
-        return {"success": True}
-
-    async def _action_update_order(
-        self,
-        user: User,
-        session: OrderSession,
-        today_stores: list,
-        data: dict,
-    ) -> dict:
-        """更新訂單（替換品項）"""
-        old_item = data.get("old_item", "")
-        new_item = data.get("new_item", {})
-
-        # 先移除舊品項
-        result = await self._action_remove_item(user, session, {"item_name": old_item, "quantity": 999})
-        if not result.get("success"):
-            return result
-
-        # 新增新品項
-        return await self._action_create_order(user, session, today_stores, {"items": [new_item]})
-
     async def _execute_personal_actions(
         self,
         user: User,
@@ -1887,59 +1828,6 @@ class LineService:
                 extra_messages.append(result)
 
         return extra_messages
-
-    async def _find_item_price(
-        self, today_stores: list, item_name: str, category: str = None
-    ) -> float:
-        """從今日菜單找品項價格
-
-        Args:
-            today_stores: 今日店家列表
-            item_name: 品項名稱
-            category: 類別名稱（可選，如「便當」「單點類」）
-
-        搜尋優先順序：
-        1. 若有指定類別，在該類別中精確匹配
-        2. 若有指定類別，在該類別中部分匹配
-        3. 無類別時，精確匹配名稱
-        4. 無類別時，部分匹配
-        """
-        all_items = []
-        for ts in today_stores:
-            result = await self.session.execute(
-                select(MenuItem, MenuCategory.name.label("category_name"))
-                .join(MenuCategory)
-                .join(Menu)
-                .where(Menu.store_id == ts.store_id)
-            )
-            for row in result.all():
-                all_items.append({
-                    "item": row[0],
-                    "category": row[1],
-                })
-
-        # 若有指定類別，優先在該類別中搜尋
-        if category:
-            # 類別內精確匹配
-            for data in all_items:
-                if data["category"] == category and data["item"].name == item_name:
-                    return float(data["item"].price)
-            # 類別內部分匹配
-            for data in all_items:
-                if data["category"] == category and item_name in data["item"].name:
-                    return float(data["item"].price)
-
-        # 無類別或類別內找不到：精確匹配
-        for data in all_items:
-            if data["item"].name == item_name:
-                return float(data["item"].price)
-
-        # 部分匹配
-        for data in all_items:
-            if item_name in data["item"].name:
-                return float(data["item"].price)
-
-        return 0
 
     # ========== 系統提示詞 ==========
 
