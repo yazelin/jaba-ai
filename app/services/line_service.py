@@ -978,18 +978,30 @@ class LineService(GroupOrderingMixin):
 
         # 店名：「家香味」「家香味菜單」「今日店家梁社漢」「炭吉開單」
         name = re.sub(r"^(今日店家|今天吃|今日)", "", text)
+        # 結尾是「菜單」「開單」表示確定要選店：對不到時容許錯一個字，還是對不到就列出可用店家
+        explicit = bool(re.search(r"(菜單|開單)$", name))
         name = re.sub(r"(的?菜單|開單)$", "", name).strip()
         if name and len(name) <= 15:
-            return await self._select_store(user, group, name, active_session, today_stores)
+            return await self._select_store(
+                user, group, name, active_session, today_stores, explicit=explicit
+            )
         return None
 
-    async def _match_stores(self, group: Group, keyword: str) -> list[Store]:
-        """群組可用店家中，名稱包含關鍵字的；完全相符優先"""
+    async def _match_stores(self, group: Group, keyword: str, fuzzy: bool = False) -> list[Store]:
+        """群組可用店家中，名稱包含關鍵字的；完全相符優先
+
+        fuzzy：包含比對不到時，容許錯一個字（「家鄉味」對到「家香味排骨便當」），
+        只在三個字以上、而且只對到一家時採用。
+        """
         stores = await self._get_stores_for_group(group)
         exact = [s for s in stores if s.name == keyword]
         if exact:
             return exact
-        return [s for s in stores if keyword in s.name]
+        matched = [s for s in stores if keyword in s.name]
+        if matched or not fuzzy or len(keyword) < 3:
+            return matched
+        close = [s for s in stores if sum(c in s.name for c in keyword) >= len(keyword) - 1]
+        return close if len(close) == 1 else []
 
     async def _select_store(
         self,
@@ -998,15 +1010,26 @@ class LineService(GroupOrderingMixin):
         keyword: str,
         active_session: Optional[OrderSession],
         today_stores: list,
+        explicit: bool = False,
     ) -> Optional[str]:
-        """管理員輸入店名：設定今日店家並開單；對不到店家回傳 None"""
-        matched = await self._match_stores(group, keyword)
+        """管理員輸入店名：設定今日店家並開單
+
+        對不到店家時，一般情況回傳 None（可能只是聊天）；
+        明講「XX菜單」「XX開單」時回覆可用店家，不讓管理員以為呷爸沒反應。
+        """
+        matched = await self._match_stores(group, keyword, fuzzy=explicit)
         if not matched:
-            return None
+            if not explicit:
+                return None
+            stores = await self._get_stores_for_group(group)
+            names = "、".join(s.name for s in stores) or "（目前沒有店家）"
+            return f"找不到「{keyword}」這家店。可用店家：{names}\n\n直接打店名就會開單，例如「{stores[0].name if stores else '店名'}」"
+        store = matched[0]
+        if len(matched) == 1 and store.name != keyword and keyword not in store.name:
+            logger.info(f"Store fuzzy matched: {keyword} -> {store.name}")
         if len(matched) > 1:
             names = "\n".join(f"• {s.name}" for s in matched)
             return f"🔍 「{keyword}」對到好幾間：\n{names}\n\n請打完整店名"
-        store = matched[0]
         today_ids = {ts.store_id for ts in today_stores}
 
         if active_session:
